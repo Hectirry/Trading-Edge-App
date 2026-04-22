@@ -1,0 +1,9 @@
+{
+  "event_type": "price_change",
+  "asset_id": "yes_token_0",
+  "market": "0xabc123deadbeef",
+  "changes": [
+    {"price": "0.52", "side": "BUY", "size": "50"}
+  ],
+  "timestamp": "1735689601000"
+}

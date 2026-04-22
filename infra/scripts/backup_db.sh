@@ -24,13 +24,13 @@ docker exec -i tea-postgres pg_dump -U "$TEA_PG_USER" -d "$TEA_PG_DB" | gzip -9 
 size=$(stat -c%s "$fpath")
 echo "[backup_db] local ok: ${fpath} (${size} bytes)"
 
-if [[ -n "${TEA_B2_ENDPOINT:-}" && -n "${TEA_B2_BUCKET:-}" ]]; then
+if [[ -n "${TEA_B2_ENDPOINT:-}" && -n "${TEA_B2_BUCKET:-}" && -n "${TEA_B2_APPLICATION_KEY:-}" && "${TEA_B2_APPLICATION_KEY}" != "<nueva_key>" ]]; then
     echo "[backup_db] uploading to s3://${TEA_B2_BUCKET}/daily/${fname}"
-    AWS_ACCESS_KEY_ID="${TEA_B2_KEY_ID}" AWS_SECRET_ACCESS_KEY="${TEA_B2_APP_KEY}" \
+    AWS_ACCESS_KEY_ID="${TEA_B2_KEY_ID}" AWS_SECRET_ACCESS_KEY="${TEA_B2_APPLICATION_KEY}" \
         aws --endpoint-url "$TEA_B2_ENDPOINT" s3 cp "$fpath" "s3://${TEA_B2_BUCKET}/daily/${fname}"
     echo "[backup_db] upload ok"
 else
-    echo "[backup_db] B2 not configured — local-only (pending B2 account setup)"
+    echo "[backup_db] B2 not configured or key placeholder — local-only (pending real TEA_B2_APPLICATION_KEY)"
 fi
 
 echo "[backup_db] pruning local >14 days"

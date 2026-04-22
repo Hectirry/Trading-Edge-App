@@ -62,8 +62,12 @@ services:
     networks: [tea_internal]
 
   tea-ingestor:
-    <<: *python-stub
+    build:
+      context: .
+      dockerfile: infra/ingestor/Dockerfile
+    image: tea-ingestor:0.2.0
     container_name: tea-ingestor
+    restart: unless-stopped
     environment:
       TEA_SERVICE: ingestor
     env_file:
@@ -74,6 +78,7 @@ services:
         condition: service_healthy
       tea-redis:
         condition: service_healthy
+    logging: *default-logging
     networks: [tea_internal]
 
   tea-engine:

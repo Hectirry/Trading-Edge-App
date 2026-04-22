@@ -342,7 +342,7 @@ A cada fase le corresponde un prompt separado para Claude Code (ver Parte IV). L
   - `healthcheck()` — devuelve estado del stream.
 - Un supervisor en el proceso `ingestor` que arranca los streams, los reinicia si mueren, y expone métricas simples en `/metrics` (Prometheus-compatible).
 - CLI `python -m trading.cli.backfill --broker binance --symbol BTCUSDT --interval 5m --from 2024-01-01 --to 2024-12-31` que llena la DB.
-- **Migrar el fetcher actual de `polybot-btc5m`** al nuevo adapter de Polymarket. El código existente se reescribe (no se copia tal cual) siguiendo la interfaz común. Preservar la lógica de reconstrucción de `window_ts` y el uso de múltiples fuentes (Goldsky, Data API, NautilusTrader loader).
+- **Migrar el fetcher actual de `polybot-btc5m`** al nuevo adapter de Polymarket. El código existente se reescribe (no se copia tal cual) siguiendo la interfaz común. Preservar la lógica de descubrimiento de mercados por slug (`btc-updown-5m-{close_ts}` redondeado a bordes de 300s) y el uso de las tres fuentes reales que el fetcher existente emplea: **Polymarket Gamma API** (metadata de mercados), **Polymarket CLOB WebSocket** (best bid/ask + depth en vivo), **Polymarket Data API** (reconciliación / trades históricos). [Corrección v1.1, 2026-04-22: la versión anterior mencionaba "Goldsky + Data API + NautilusTrader loader". Goldsky no está en uso en `polybot-btc5m`; el loader de NautilusTrader pertenece a Fase 2.]
 - Panel en Grafana "Data freshness" que muestra: último timestamp escrito por cada tabla/símbolo, gap respecto a "ahora", tasa de escritura en trades/minuto.
 - Tests unitarios para cada adapter usando datos sintéticos o fixtures grabadas de las APIs.
 - Tests de integración **opcionales** que pegan contra las APIs reales, marcados con `@pytest.mark.integration` y no corren en CI por default.
@@ -365,7 +365,7 @@ A cada fase le corresponde un prompt separado para Claude Code (ver Parte IV). L
 
 **Decisiones provisionales de esta fase:**
 
-- **Fuente primaria para Polymarket:** **[PROVISIONAL]** depende de lo que ya exista en `polybot-btc5m`. Probablemente Data API + Goldsky subgraph. Claude Code debe estudiar el código actual antes de decidir.
+- **Fuente primaria para Polymarket:** **[FIRME tras estudio de `polybot-btc5m`, 2026-04-22]** Gamma API (metadata), CLOB WebSocket (precios en vivo), Data API (reconciliación). El NautilusTrader loader entra en Fase 2, no en Fase 1.
 - **Retención de trades tick:** **[PROVISIONAL]** infinito por ahora. Si el disco sufre, aplicar TimescaleDB retention policy (ej. comprimir >30 días, drop >1 año).
 
 ---

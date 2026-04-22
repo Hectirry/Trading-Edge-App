@@ -1,0 +1,8 @@
+{
+  "event_type": "book",
+  "asset_id": "yes_token_0",
+  "market": "0xabc123deadbeef",
+  "bids": [{"price": "0.51", "size": "100"}],
+  "asks": [{"price": "0.53", "size": "100"}],
+  "timestamp": "1735689600000"
+}

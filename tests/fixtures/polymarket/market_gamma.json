@@ -1,0 +1,15 @@
+[
+  {
+    "conditionId": "0xabc123deadbeef",
+    "slug": "btc-updown-5m-1735690200",
+    "question": "Will Bitcoin go up in the next 5 minutes ending at 1735690200?",
+    "closed": false,
+    "startDate": "2026-01-01T00:00:00Z",
+    "endDate": "2026-01-01T00:05:00Z",
+    "clobTokenIds": "[\"yes_token_0\", \"no_token_0\"]",
+    "tokens": [
+      {"token_id": "yes_token_0", "outcome": "Yes"},
+      {"token_id": "no_token_0", "outcome": "No"}
+    ]
+  }
+]

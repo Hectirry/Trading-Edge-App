@@ -1,0 +1,141 @@
+{
+  "id": null,
+  "uid": "tea-data-freshness",
+  "title": "TEA — Data freshness",
+  "tags": ["tea", "phase1", "ingest"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "OHLCV freshness — age / expected period (green <2x, yellow <4x, red >=4x)",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "WITH recents AS (SELECT exchange, symbol, interval, max(ts) AS last_ts, CASE interval WHEN '1m' THEN 60 WHEN '5m' THEN 300 WHEN '15m' THEN 900 WHEN '1h' THEN 3600 WHEN '1d' THEN 86400 END AS period_s FROM market_data.crypto_ohlcv GROUP BY exchange, symbol, interval) SELECT exchange || '/' || symbol || '/' || interval AS metric, round(EXTRACT(EPOCH FROM (now() - last_ts))::numeric / period_s, 2) AS value FROM recents ORDER BY 1;"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "red", "value": 4 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Trades — seconds since last write",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 6 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT exchange || '/' || symbol AS metric, EXTRACT(EPOCH FROM (now() - max(ts)))::int AS value FROM market_data.crypto_trades GROUP BY exchange, symbol ORDER BY 1;"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 180 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Polymarket — last market discovered & last price tick",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 6 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT 'polymarket/markets' AS metric, EXTRACT(EPOCH FROM (now() - to_timestamp(max(window_ts))))::int AS value FROM market_data.polymarket_markets UNION ALL SELECT 'polymarket/prices' AS metric, EXTRACT(EPOCH FROM (now() - max(ts)))::int AS value FROM market_data.polymarket_prices;"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 300 },
+              { "color": "red", "value": 900 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "OHLCV write rate — rows per minute (last 1h)",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT time_bucket('1 minute', ts) AS time, exchange || '/' || symbol || '/' || interval AS metric, count(*)::float AS value FROM market_data.crypto_ohlcv WHERE ts > now() - interval '1 hour' GROUP BY 1, 2 ORDER BY 1;"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Trades write rate — rows per minute (last 1h)",
+      "gridPos": { "x": 0, "y": 22, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT time_bucket('1 minute', ts) AS time, exchange || '/' || symbol AS metric, count(*)::float AS value FROM market_data.crypto_trades WHERE ts > now() - interval '1 hour' GROUP BY 1, 2 ORDER BY 1;"
+        }
+      ]
+    }
+  ]
+}

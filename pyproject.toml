@@ -3,11 +3,22 @@ name = "trading-edge-app"
 version = "0.0.1"
 description = "Multi-broker trading system on NautilusTrader"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "asyncpg==0.30.0",
+    "httpx==0.28.1",
+    "websockets==14.1",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.0",
+    "tenacity==9.0.0",
+    "aiolimiter==1.2.1",
+    "structlog==24.4.0",
+    "orjson==3.10.12",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest==8.3.4",
+    "pytest-asyncio==0.24.0",
     "ruff==0.8.4",
     "pre-commit==4.0.1",
 ]
@@ -21,7 +32,8 @@ select = ["E", "F", "I", "W", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not integration'"
+asyncio_mode = "auto"
 markers = [
     "integration: hits real external APIs; skipped in CI by default",
 ]
