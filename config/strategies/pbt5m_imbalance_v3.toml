@@ -50,3 +50,9 @@ skip_if_spread_bps = 500
 loss_pause_threshold_usd = 5.0
 loss_pause_window_minutes = 30
 loss_pause_duration_minutes = 30
+
+[paper]
+# Per-strategy paper capital and thresholds (see ADR 0008).
+capital_usd = 1000.0
+daily_loss_alert_pct = 0.03
+daily_loss_pause_pct = 0.05

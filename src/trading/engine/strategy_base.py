@@ -15,6 +15,11 @@ class StrategyBase(ABC):
         self.config = config
         self.params: dict = config.get("params", config)
 
+    @staticmethod
+    def build_breakdown(**checks) -> dict:
+        """Uniform `signal_breakdown` helper — shape: {check_name: value}."""
+        return dict(checks)
+
     def on_start(self) -> None:  # noqa: B027  -- optional override
         return
 

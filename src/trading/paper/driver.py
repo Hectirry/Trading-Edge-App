@@ -344,14 +344,19 @@ class PaperDriver:
 def _tick_from_dict(d: dict) -> TickContext:
     ts = float(d["ts"])
     close_ts = float(d["window_close_ts"])
+    spot = float(d.get("spot_price", 0.0) or 0.0)
+    open_price = float(d.get("open_price", 0.0) or 0.0)
+    delta_bps = 0.0
+    if open_price > 0:
+        delta_bps = (spot - open_price) / open_price * 10000.0
     return TickContext(
         ts=ts,
         market_slug=d["market_slug"],
         t_in_window=float(d.get("t_in_window", 0.0)),
         window_close_ts=close_ts,
-        spot_price=float(d.get("spot_price", 0.0) or 0.0),
+        spot_price=spot,
         chainlink_price=float(d.get("chainlink_price", 0.0) or 0.0) or None,
-        open_price=float(d.get("open_price", 0.0) or 0.0),
+        open_price=open_price,
         pm_yes_bid=float(d.get("pm_yes_bid", 0.0) or 0.0),
         pm_yes_ask=float(d.get("pm_yes_ask", 0.0) or 0.0),
         pm_no_bid=float(d.get("pm_no_bid", 0.0) or 0.0),
@@ -367,6 +372,7 @@ def _tick_from_dict(d: dict) -> TickContext:
         vol_regime="unknown",
         recent_ticks=[],
         t_to_close=max(0.0, close_ts - ts),
+        delta_bps=delta_bps,
     )
 
 

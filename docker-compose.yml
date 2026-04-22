@@ -106,6 +106,8 @@ services:
       - /home/coder/polybot-btc5m/data:/polybot-btc5m-data:ro
       # Read-only mount of polybot report JSONs for parity probe.
       - /home/coder/polybot-btc5m/reports:/polybot-btc5m-reports:ro
+      # Read-only mount of BTC-Tendencia-5m data for trend_confirm_t1_v1 parity.
+      - /home/coder/BTC-Tendencia-5m/data:/btc-tendencia-data:ro
       # Make scripts/ available in the engine for parity probe.
       - ./scripts:/app/scripts:ro
       # Research reports live under the engine's working tree so they

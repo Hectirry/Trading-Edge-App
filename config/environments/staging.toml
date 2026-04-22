@@ -7,30 +7,27 @@
 name = "staging"
 mode = "paper"
 
-# PROVISIONAL capital. Review after 2 weeks of live paper.
+# Per-strategy capital + loss thresholds live in each strategy TOML's
+# [paper] section (ADR 0008). Values below kept as a fallback for
+# strategies that don't define their own [paper] block.
 capital_usd = 1000.0
-
-# PROVISIONAL: daily thresholds in percent of capital_usd.
-# alert = 3% (per Fase 3 plan), pause = 5% (doc Fase 3 provisional).
 daily_loss_alert_pct = 0.03
 daily_loss_pause_pct = 0.05
 
-# Heartbeat from engine to Redis. Watcher alerts when `heartbeat_timeout_s`
-# elapses without a fresh tick on `tea:engine:last_heartbeat`.
 heartbeat_interval_s = 10
 heartbeat_timeout_s = 60
 
-# Reconciliation cadence. Alert-only on divergence; no auto-pause (per
-# Phase 3 plan adjustment).
 reconciliation_interval_s = 300
 
-# paper_ticks retention is set via Timescale policy in 05_paper_ticks...sql
-# (30 days). Duplicated here as a reminder.
 paper_ticks_retention_days = 30
 
 [strategies.imbalance_v3]
 enabled = true
 params_file = "config/strategies/pbt5m_imbalance_v3.toml"
+
+[strategies.trend_confirm_t1_v1]
+enabled = true
+params_file = "config/strategies/pbt5m_trend_confirm_t1_v1.toml"
 
 [deployment]
 service = "tea-engine"

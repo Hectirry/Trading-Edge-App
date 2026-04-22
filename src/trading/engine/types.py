@@ -16,6 +16,11 @@ class Side(str, Enum):
     NONE = "NONE"
 
 
+class OrderType(str, Enum):
+    MARKET = "MARKET"  # FAK: immediate fill against resting liquidity
+    GTC = "GTC"  # Good-Till-Cancel, rests in book until filled or TTL
+
+
 @dataclass
 class TickContext:
     """Snapshot of state at a single tick, input to the strategy."""
@@ -48,6 +53,9 @@ class TickContext:
     rsi_14: float = 50.0
     vol_realized: float = 0.0
     vol_ewma: float = 0.0
+    # Derived from spot_price vs open_price (bps). Populated by loaders /
+    # tick_recorder so strategies don't recompute it.
+    delta_bps: float = 0.0
 
     @property
     def depth_total_usd(self) -> float:
@@ -60,6 +68,12 @@ class Decision:
     side: Side = Side.NONE
     reason: str = ""
     signal_features: dict = field(default_factory=dict)
+    signal_breakdown: dict = field(default_factory=dict)
+    order_type: OrderType = OrderType.MARKET
+    limit_price: float | None = None
+    ttl_seconds: int | None = None
+    horizon_s: int | None = None
+    size_usd: float | None = None
 
 
 @dataclass

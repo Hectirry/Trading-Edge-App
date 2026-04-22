@@ -91,7 +91,35 @@
         {
           "refId": "A",
           "format": "table",
-          "rawSql": "SELECT o.ts_submit AS entry_ts, o.instrument_id, o.price AS entry_price, f_settle.price AS exit_price, (f_settle.metadata::jsonb->>'resolution') AS resolution, round(((f_settle.metadata::jsonb->>'pnl')::numeric), 2) AS pnl FROM trading.orders o LEFT JOIN trading.fills f_settle ON f_settle.order_id=o.order_id AND f_settle.metadata::jsonb->>'kind'='settle' WHERE o.mode='paper' ORDER BY o.ts_submit DESC LIMIT 20;"
+          "rawSql": "SELECT o.ts_submit AS entry_ts, o.strategy_id, o.instrument_id, o.price AS entry_price, f_settle.price AS exit_price, (f_settle.metadata::jsonb->>'resolution') AS resolution, round(((f_settle.metadata::jsonb->>'pnl')::numeric), 2) AS pnl FROM trading.orders o LEFT JOIN trading.fills f_settle ON f_settle.order_id=o.order_id AND f_settle.metadata::jsonb->>'kind'='settle' WHERE o.mode='paper' ORDER BY o.ts_submit DESC LIMIT 20;"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "PnL today per strategy",
+      "gridPos": { "x": 0, "y": 21, "w": 12, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT o.strategy_id, count(*) FILTER (WHERE f_settle.order_id IS NOT NULL) AS trades, round(SUM(COALESCE((f_settle.metadata::jsonb->>'pnl')::numeric, 0)), 2) AS pnl_usd FROM trading.orders o LEFT JOIN trading.fills f_settle ON f_settle.order_id=o.order_id AND f_settle.metadata::jsonb->>'kind'='settle' WHERE o.mode='paper' AND o.ts_submit::date = (now() AT TIME ZONE 'UTC')::date GROUP BY o.strategy_id ORDER BY pnl_usd DESC;"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Cumulative PnL per strategy (24h)",
+      "gridPos": { "x": 12, "y": 21, "w": 12, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT f.ts AS time, o.strategy_id AS metric, SUM((f.metadata::jsonb->>'pnl')::numeric) OVER (PARTITION BY o.strategy_id ORDER BY f.ts) AS equity FROM trading.fills f JOIN trading.orders o ON o.order_id = f.order_id WHERE f.mode='paper' AND f.metadata::jsonb->>'kind'='settle' AND f.ts > now() - interval '24 hours' ORDER BY f.ts;"
         }
       ]
     }

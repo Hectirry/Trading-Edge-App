@@ -26,10 +26,22 @@ class MarketOutcome:
 
 
 class PolybotSQLiteLoader:
-    """Read-only iterator over polybot-btc5m's `ticks` table."""
+    """Read-only iterator over polybot-style `ticks` tables.
 
-    def __init__(self, db_path: str) -> None:
+    Two sibling projects share the schema but embed a different timestamp
+    in the slug suffix:
+
+    * ``polybot-btc5m`` → slug = ``btc-updown-5m-{close_ts}``
+    * ``BTC-Tendencia-5m`` → slug = ``btc-updown-5m-{open_ts}``
+
+    The distinction matters because strategies gate on ``t_in_window``
+    (= ``ts - open_ts``) and the close-vs-open offset is 300 s. Callers
+    pass ``slug_encodes_open_ts=True`` when reading BTC-Tendencia.
+    """
+
+    def __init__(self, db_path: str, slug_encodes_open_ts: bool = False) -> None:
         self.db_path = db_path
+        self.slug_encodes_open_ts = slug_encodes_open_ts
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
@@ -61,7 +73,8 @@ class PolybotSQLiteLoader:
                     SELECT ts, market_slug, t_in_window, spot_price, chainlink_price,
                            open_price, pm_yes_bid, pm_yes_ask, pm_no_bid, pm_no_ask,
                            pm_depth_yes, pm_depth_no, pm_imbalance, pm_spread_bps,
-                           implied_prob_yes, model_prob_yes, edge, z_score
+                           implied_prob_yes, model_prob_yes, edge, z_score,
+                           delta_bps
                     FROM ticks
                     WHERE market_slug = ?
                       AND ts >= ? AND ts <= ?
@@ -70,8 +83,13 @@ class PolybotSQLiteLoader:
                     (slug, from_ts, to_ts),
                 ).fetchall()
                 ticks: list[TickContext] = []
-                close_ts = float(slug.rsplit("-", 1)[-1])
-                open_ts = close_ts - 300.0
+                slug_ts = float(slug.rsplit("-", 1)[-1])
+                if self.slug_encodes_open_ts:
+                    open_ts = slug_ts
+                    close_ts = slug_ts + 300.0
+                else:
+                    close_ts = slug_ts
+                    open_ts = slug_ts - 300.0
                 for r in rows:
                     ts = r[0]
                     yes_bid = r[6] or 0.0
@@ -104,6 +122,7 @@ class PolybotSQLiteLoader:
                             vol_regime="unknown",
                             recent_ticks=[],
                             t_to_close=max(0.0, close_ts - ts),
+                            delta_bps=float(r[18] or 0.0),
                         )
                     )
                 yield slug, ticks
@@ -126,9 +145,10 @@ class PolybotSQLiteLoader:
             ).fetchall()
             for slug, _first_ts, _last_ts in rows:
                 try:
-                    close_ts = float(slug.rsplit("-", 1)[-1])
+                    slug_ts = float(slug.rsplit("-", 1)[-1])
                 except ValueError:
                     continue
+                close_ts = slug_ts + 300.0 if self.slug_encodes_open_ts else slug_ts
                 open_row = c.execute(
                     "SELECT open_price FROM ticks WHERE market_slug=? " "ORDER BY ts ASC LIMIT 1",
                     (slug,),

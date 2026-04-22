@@ -54,7 +54,10 @@ async def _run(args: argparse.Namespace) -> None:
     create_trading_node(mode="backtest", strategy_name=args.strategy)
 
     if args.source == "polybot_sqlite":
-        loader = PolybotSQLiteLoader(db_path=args.polybot_db)
+        loader = PolybotSQLiteLoader(
+            db_path=args.polybot_db,
+            slug_encodes_open_ts=args.slug_encodes_open_ts,
+        )
     elif args.source == "paper_ticks":
         loader = PaperTicksLoader(dsn=get_settings().pg_dsn)
     else:
@@ -129,6 +132,11 @@ def main() -> None:
         "paper_ticks: read from market_data.paper_ticks (Phase 3 output).",
     )
     p.add_argument("--polybot-db", default="/polybot-btc5m-data/polybot.db")
+    p.add_argument(
+        "--slug-encodes-open-ts",
+        action="store_true",
+        help="Set for BTC-Tendencia-5m databases where slug = open_ts not close_ts.",
+    )
     p.add_argument("--no-persist", action="store_true", help="skip DB + HTML (smoke test)")
     p.add_argument("--seed", type=int, default=42, help="deterministic fill-sim RNG seed")
     args = p.parse_args()

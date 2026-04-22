@@ -139,11 +139,9 @@ def run_backtest(
             continue
         n_markets += 1
 
-        # Window open/close derived from the slug; fall back to ts bounds.
-        try:
-            close_ts_market = float(slug.rsplit("-", 1)[-1])
-        except ValueError:
-            close_ts_market = ticks[-1].ts
+        # Use the loader-supplied window_close_ts (honors slug-encoding
+        # convention: polybot-btc5m=close, BTC-Tendencia-5m=open+300).
+        close_ts_market = ticks[0].window_close_ts or ticks[-1].ts
 
         # Market-opening reference price — first non-null open_price in ticks.
         open_price_market = 0.0

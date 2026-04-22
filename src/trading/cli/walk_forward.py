@@ -38,6 +38,10 @@ def _load_strategy(name: str, cfg: dict):
         from trading.strategies.polymarket_btc5m.imbalance_v3 import ImbalanceV3
 
         return lambda: ImbalanceV3(config=cfg)
+    if name == "polymarket_btc5m/trend_confirm_t1_v1":
+        from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import TrendConfirmT1V1
+
+        return lambda: TrendConfirmT1V1(config=cfg)
     raise SystemExit(f"unknown strategy: {name}")
 
 
@@ -77,13 +81,18 @@ def main() -> None:
     p.add_argument("--step-days", type=int, default=1)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--polybot-db", default="/polybot-btc5m-data/polybot.db")
+    p.add_argument(
+        "--slug-encodes-open-ts",
+        action="store_true",
+        help="Set for BTC-Tendencia-5m databases where slug = open_ts.",
+    )
     p.add_argument("--tolerance", type=float, default=0.30)
     p.add_argument("--out", default=None, help="optional JSON output path")
     args = p.parse_args()
 
     cfg = tomli.loads(Path(args.params).read_text())
     factory = _load_strategy(args.strategy, cfg)
-    loader = PolybotSQLiteLoader(args.polybot_db)
+    loader = PolybotSQLiteLoader(args.polybot_db, slug_encodes_open_ts=args.slug_encodes_open_ts)
 
     started_at = datetime.now(tz=UTC)
     result = run_walk_forward(

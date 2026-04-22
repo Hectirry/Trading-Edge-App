@@ -468,6 +468,98 @@ Track against the Phase 3 criteria once 7 days of paper uptime pass:
       → `sudo rm` → recovery alert).
 - [ ] Runbook reviewed after the first weekly comparison.
 
+## Phase 3.5 — Second strategy: trend_confirm_t1_v1
+
+Ported from `/home/coder/BTC-Tendencia-5m/strategies/trend_confirm_t1_v1.py`.
+T-90 s horizon entry with 3-of-4 AFML confirmation + Chainlink adverse
+gate. Runs alongside `imbalance_v3` in the same `tea-engine` under the
+multi-strategy registry (ADR 0008). Each strategy owns its `RiskManager`,
+stake, and capital.
+
+### Config registry
+
+`config/environments/staging.toml` enables both strategies:
+
+```toml
+[strategies.imbalance_v3]
+enabled = true
+params_file = "config/strategies/pbt5m_imbalance_v3.toml"
+
+[strategies.trend_confirm_t1_v1]
+enabled = true
+params_file = "config/strategies/pbt5m_trend_confirm_t1_v1.toml"
+```
+
+Disable by setting `enabled = false`; takes effect on next engine
+restart (no hotswap).
+
+### Per-strategy capital + thresholds
+
+Each strategy's TOML owns a `[paper]` section:
+
+```toml
+[paper]
+capital_usd = 1000.0
+daily_loss_alert_pct = 0.03
+daily_loss_pause_pct = 0.05
+```
+
+`staging.toml` keeps the same three fields as a fallback only used
+when a strategy doesn't specify its own `[paper]` block.
+
+### Backtest + walk-forward with BTC-Tendencia-5m
+
+BTC-Tendencia embeds `open_ts` in the slug (`btc-updown-5m-{open_ts}`)
+instead of `close_ts`. Pass `--slug-encodes-open-ts` to backtest /
+walk-forward CLIs when pointing at `polybot-agent.db`:
+
+```
+docker exec tea-engine python -m trading.cli.backtest \
+  --strategy polymarket_btc5m/trend_confirm_t1_v1 \
+  --params config/strategies/pbt5m_trend_confirm_t1_v1.toml \
+  --from 2026-04-22T08:00:00Z --to 2026-04-22T20:15:00Z \
+  --source polybot_sqlite \
+  --polybot-db /btc-tendencia-data/polybot-agent.db \
+  --slug-encodes-open-ts
+```
+
+### Parity note (Phase 3.5 scope)
+
+Unlike `imbalance_v3` (which had a deterministic backtest JSON as the
+parity reference and achieved 305/305 bit-exact), `trend_confirm_t1_v1`'s
+only available reference is the LIVE `trades` table of the running
+BTC-Tendencia engine. Live trades capture a specific feed-arrival
+ordering and evolving config (stake changed between 1.5 and 5.0 USD
+during the history window), so a bit-exact replay is not expected.
+
+On the stable-config window (2026-04-22, stake_usd=5.0), the TEA
+replay produces roughly the same count (within ±20 %) and horizon
+distribution as the live trades, with ~40 % slug overlap. The
+divergence is attributed to:
+
+1. Live decisions use the feed snapshot AT TICK TIME; replay uses
+   post-hoc `ticks` rows that may differ in arrival order.
+2. Live AFML features are recomputed on a rolling deque buffer that
+   includes upstream feature snapshots beyond the current market;
+   replay reconstructs the buffer fresh per market.
+3. Live fills consume CLOB liquidity, replay applies the 95 % prob
+   +10 bps slippage sim.
+
+Walk-forward on 4 d IS / 1 d OOS over the 6-day polybot-agent window
+(2 splits): `unstable` (fold 0 +$24.54 WR 61.7 % vs fold 1 -$13.95
+WR 64.5 %). Expected given tiny sample; revisit after 4 weeks of
+TEA paper. Verdict tagged `inconclusive_small_sample` if any split
+has n_trades_oos < 20.
+
+### Grafana extension
+
+`tea-paper-live` dashboard now has two extra panels:
+
+- "PnL today per strategy" — trades and realized PnL grouped by
+  `strategy_id` for the current UTC day.
+- "Cumulative PnL per strategy (24h)" — time series split by
+  `strategy_id` over the last 24 h.
+
 ## Known caveats / Phase 0 pending items
 
 - B2 bucket not yet configured. `backup_db.sh` stores locally; remote

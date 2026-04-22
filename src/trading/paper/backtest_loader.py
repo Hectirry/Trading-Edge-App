@@ -98,15 +98,20 @@ class PaperTicksLoader:
             for r in rows:
                 ts = r["ts"].timestamp()
                 close_ts = float(r["window_close_ts"])
+                spot = float(r["spot_price"] or 0.0)
+                open_price = float(r["open_price"] or r["spot_price"] or 0.0)
+                delta_bps = 0.0
+                if open_price > 0:
+                    delta_bps = (spot - open_price) / open_price * 10000.0
                 out.append(
                     TickContext(
                         ts=ts,
                         market_slug=r["market_slug"],
                         t_in_window=float(r["t_in_window"] or 0.0),
                         window_close_ts=close_ts,
-                        spot_price=float(r["spot_price"] or 0.0),
+                        spot_price=spot,
                         chainlink_price=float(r["chainlink_price"] or 0.0) or None,
-                        open_price=float(r["open_price"] or r["spot_price"] or 0.0),
+                        open_price=open_price,
                         pm_yes_bid=float(r["pm_yes_bid"] or 0.0),
                         pm_yes_ask=float(r["pm_yes_ask"] or 0.0),
                         pm_no_bid=float(r["pm_no_bid"] or 0.0),
@@ -122,6 +127,7 @@ class PaperTicksLoader:
                         vol_regime="unknown",
                         recent_ticks=[],
                         t_to_close=max(0.0, close_ts - ts),
+                        delta_bps=delta_bps,
                     )
                 )
             return out
