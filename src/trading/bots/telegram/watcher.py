@@ -12,6 +12,7 @@ from time import time
 
 import redis.asyncio as redis
 
+from trading.bots.telegram.commands import CommandPoller
 from trading.common.config import get_settings
 from trading.common.logging import configure_logging, get_logger
 from trading.notifications import telegram as T
@@ -94,10 +95,12 @@ async def main_async() -> None:
     settings = get_settings()
     redis_url = f"redis://{settings.redis_host}:{settings.redis_port}/0"
     w = Watcher(redis_url)
+    poller = CommandPoller()
     await asyncio.gather(
         w.run_heartbeat(),
         w.run_daily_report(),
         w.run_weekly_comparison(),
+        poller.run(),
     )
 
 

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}compare · TEA{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <h1 class="text-lg font-semibold">compare ({{ runs|length }} run{{ 's' if runs|length != 1 else '' }})</h1>
+
+  {% if not runs %}
+    <p class="text-slate-500">no runs selected. pick 2 or 3 on the <a href="/research" class="text-sky-400 hover:underline">index</a>.</p>
+  {% else %}
+    <table class="w-full text-left">
+      <thead class="text-slate-400 text-xs border-b border-slate-800">
+        <tr>
+          <th class="py-2 w-40">metric</th>
+          {% for r in runs %}
+            <th class="py-2">
+              <a href="/research/{{ r.id }}" class="text-sky-400 hover:underline">{{ r.strategy_name }}</a>
+              <div class="text-slate-500 font-normal">{{ r.id[:8] }}</div>
+            </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% macro row(label, key, fmt='{:.4f}', pct=False) -%}
+          <tr class="border-b border-slate-900">
+            <td class="py-1 text-slate-500">{{ label }}</td>
+            {% for r in runs %}
+              <td class="py-1">
+                {% set v = r[key] %}
+                {% if v is none %}-
+                {% elif pct %}{{ '%.1f%%'|format(v * 100) }}
+                {% else %}{{ fmt.format(v) }}
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {%- endmacro %}
+
+        <tr class="border-b border-slate-900">
+          <td class="py-1 text-slate-500">status</td>
+          {% for r in runs %}<td class="py-1">{{ r.status }}</td>{% endfor %}
+        </tr>
+        <tr class="border-b border-slate-900">
+          <td class="py-1 text-slate-500">started</td>
+          {% for r in runs %}<td class="py-1 text-slate-400">{{ r.started_at.isoformat() if r.started_at else '-' }}</td>{% endfor %}
+        </tr>
+        <tr class="border-b border-slate-900">
+          <td class="py-1 text-slate-500">dataset</td>
+          {% for r in runs %}<td class="py-1 text-slate-400 text-xs">{{ r.dataset_from }} → {{ r.dataset_to }}</td>{% endfor %}
+        </tr>
+        {{ row('n trades', 'n_trades', '{:.0f}') }}
+        {{ row('total pnl', 'total_pnl') }}
+        {{ row('win rate', 'win_rate', pct=True) }}
+        {{ row('sharpe / trade', 'sharpe_per_trade', '{:.3f}') }}
+        {{ row('mdd usd', 'mdd_usd', '{:.2f}') }}
+      </tbody>
+    </table>
+  {% endif %}
+
+  <a href="/research" class="text-slate-400">← back</a>
+</div>
+{% endblock %}

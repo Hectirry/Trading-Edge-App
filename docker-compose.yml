@@ -117,8 +117,12 @@ services:
     networks: [tea_internal]
 
   tea-api:
-    <<: *python-stub
+    build:
+      context: .
+      dockerfile: infra/api/Dockerfile
+    image: tea-api:0.4.0
     container_name: tea-api
+    restart: unless-stopped
     environment:
       TEA_SERVICE: api
     env_file:
@@ -129,7 +133,20 @@ services:
         condition: service_healthy
       tea-redis:
         condition: service_healthy
-    networks: [tea_internal]
+    volumes:
+      # Dual-path KILL_SWITCH (ADR 0009). Engine reads both; API writes here.
+      - tea_control:/var/tea/control
+      - tea_research_reports:/app/src/trading/research/reports
+    logging: *default-logging
+    networks: [tea_internal, tea_edge]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "tea_edge"
+      traefik.http.routers.tea-api.rule: "Host(`187-124-130-221.nip.io`) && (PathPrefix(`/research`) || PathPrefix(`/api`))"
+      traefik.http.routers.tea-api.entrypoints: "websecure"
+      traefik.http.routers.tea-api.tls: "true"
+      traefik.http.routers.tea-api.tls.certresolver: "letsencrypt"
+      traefik.http.services.tea-api.loadbalancer.server.port: "8000"
 
   tea-telegram-bot:
     build:
@@ -180,6 +197,37 @@ services:
       traefik.http.routers.tea-grafana.tls.certresolver: "letsencrypt"
       traefik.http.services.tea-grafana.loadbalancer.server.port: "3000"
 
+  tea-node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: tea-node-exporter
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    command:
+      - "--path.rootfs=/host"
+      - "--web.listen-address=127.0.0.1:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host:ro,rslave
+    logging: *default-logging
+
+  tea-prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: tea-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - tea_prom_data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging: *default-logging
+    networks: [tea_internal]
+
 networks:
   tea_internal:
     name: tea_internal
@@ -196,3 +244,7 @@ volumes:
     name: tea_grafana
   tea_research_reports:
     name: tea_research_reports
+  tea_control:
+    name: tea_control
+  tea_prom_data:
+    name: tea_prom_data

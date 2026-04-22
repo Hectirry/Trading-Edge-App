@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets:
+          # node_exporter runs with network_mode: host and binds 127.0.0.1:9100.
+          # Prometheus resolves the host via host.docker.internal (added in
+          # docker-compose via extra_hosts).
+          - "host.docker.internal:9100"
+
+  - job_name: tea-ingestor
+    static_configs:
+      - targets:
+          - "tea-ingestor:9000"
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - "localhost:9090"

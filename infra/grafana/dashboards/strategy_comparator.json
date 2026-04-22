@@ -1,0 +1,71 @@
+{
+  "id": null,
+  "uid": "tea-strategy-comparator",
+  "title": "TEA — Strategy comparator",
+  "tags": ["tea", "phase4", "strategies"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Latest completed backtest per strategy",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT DISTINCT ON (strategy_name) strategy_name, started_at, (metrics::jsonb->'performance'->>'n_trades')::int AS n_trades, (metrics::jsonb->'performance'->>'total_pnl')::numeric AS pnl, (metrics::jsonb->'performance'->>'win_rate')::numeric AS win_rate, (metrics::jsonb->'risk_adjusted'->>'sharpe_per_trade')::numeric AS sharpe, (metrics::jsonb->'risk_adjusted'->>'mdd_usd')::numeric AS mdd FROM research.backtests WHERE status = 'completed' ORDER BY strategy_name, started_at DESC;"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Backtest total_pnl over time (by strategy)",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT started_at AS time, (metrics::jsonb->'performance'->>'total_pnl')::numeric AS pnl, strategy_name AS metric FROM research.backtests WHERE status = 'completed' AND metrics IS NOT NULL ORDER BY started_at;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Paper cumulative PnL (by strategy) — last 30d",
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT f.ts AS time, SUM((f.metadata::jsonb->>'pnl')::numeric) OVER (PARTITION BY o.strategy_id ORDER BY f.ts) AS cum_pnl, o.strategy_id AS metric FROM trading.fills f JOIN trading.orders o ON o.order_id = f.order_id WHERE f.mode = 'paper' AND f.metadata::jsonb->>'kind' = 'settle' AND f.ts > now() - interval '30 days' ORDER BY f.ts;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Paper vs backtest comparisons (weekly, per ADR 0008)",
+      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT strategy_name, week_start, week_end, paper_trades, backtest_trades, paper_pnl, backtest_pnl, delta_trades_pct, delta_pnl_pct, verdict FROM research.paper_vs_backtest_comparisons ORDER BY week_start DESC LIMIT 50;"
+        }
+      ]
+    }
+  ]
+}

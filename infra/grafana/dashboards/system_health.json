@@ -1,0 +1,104 @@
+{
+  "id": null,
+  "uid": "tea-system-health",
+  "title": "TEA — System health",
+  "tags": ["tea", "phase4", "infra"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "CPU usage (%)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "tea-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 - (avg(irate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100)",
+          "legendFormat": "cpu used"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "RAM used (%)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "tea-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
+          "legendFormat": "mem used"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Disk used root (%)",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "tea-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(1 - (node_filesystem_avail_bytes{mountpoint=\"/host\",fstype!=\"tmpfs\"} / node_filesystem_size_bytes{mountpoint=\"/host\",fstype!=\"tmpfs\"})) * 100",
+          "legendFormat": "/ used"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Load avg (1m)",
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "tea-prometheus" },
+      "targets": [ { "refId": "A", "expr": "node_load1" } ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Ingestor up",
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "tea-prometheus" },
+      "targets": [ { "refId": "A", "expr": "up{job=\"tea-ingestor\"}" } ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "text": "DOWN", "color": "red" },
+              "1": { "text": "UP",   "color": "green" }
+            } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Network RX/TX (bytes/s)",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "tea-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "irate(node_network_receive_bytes_total{device!~\"lo|docker.*|veth.*|br-.*\"}[1m])",
+          "legendFormat": "rx {{device}}"
+        },
+        {
+          "refId": "B",
+          "expr": "irate(node_network_transmit_bytes_total{device!~\"lo|docker.*|veth.*|br-.*\"}[1m])",
+          "legendFormat": "tx {{device}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    }
+  ]
+}

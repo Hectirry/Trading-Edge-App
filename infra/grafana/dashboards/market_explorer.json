@@ -1,0 +1,97 @@
+{
+  "id": null,
+  "uid": "tea-market-explorer",
+  "title": "TEA — Market explorer",
+  "tags": ["tea", "phase4", "markets"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Upcoming BTC up/down 5m markets",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT slug, condition_id, close_time, resolved, outcome FROM market_data.polymarket_markets WHERE slug LIKE 'btc-%updown-5m-%' AND close_time > now() ORDER BY close_time ASC LIMIT 100;"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "YES/NO prices — most recent live market",
+      "gridPos": { "x": 0, "y": 10, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT p.ts AS time, p.price AS price, p.token_id AS metric FROM market_data.polymarket_prices p JOIN (SELECT condition_id FROM market_data.polymarket_markets WHERE slug LIKE 'btc-%updown-5m-%' AND close_time > now() ORDER BY close_time ASC LIMIT 1) m ON p.condition_id = m.condition_id WHERE p.ts > now() - interval '30 minutes' ORDER BY p.ts;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0, "max": 1 } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Paper ticks / min (last 1 h)",
+      "gridPos": { "x": 0, "y": 20, "w": 8, "h": 6 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT (COUNT(*) / 60.0) AS value FROM market_data.paper_ticks WHERE ts > now() - interval '1 hour';"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active markets (close_time > now)",
+      "gridPos": { "x": 8, "y": 20, "w": 8, "h": 6 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS value FROM market_data.polymarket_markets WHERE slug LIKE 'btc-%updown-5m-%' AND close_time > now();"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Data freshness (s)",
+      "gridPos": { "x": 16, "y": 20, "w": 8, "h": 6 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(ts))) AS value FROM market_data.paper_ticks;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red",    "value": 60 }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

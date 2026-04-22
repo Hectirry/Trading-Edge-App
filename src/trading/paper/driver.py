@@ -72,6 +72,12 @@ class PaperDriver:
         # Kill switch state for edge-triggered alerts.
         self._kill_switch_last_state: bool = False
 
+        # Pause state (ADR 0009). Controlled via Redis channel
+        # tea:control:<strategy_name> + persisted in trading.strategy_state so
+        # pauses survive engine restarts.
+        self._paused: bool = False
+        self._control_channel: str = f"tea:control:{self.strategy.name}"
+
         # Eval counters. Flushed on a 60s cadence so silent filtering is visible.
         self._eval_counts: dict[str, int] = {}
         self._eval_skip_reasons: dict[str, int] = {}
@@ -83,16 +89,29 @@ class PaperDriver:
 
     async def run(self) -> None:
         self._redis = redis.from_url(self.redis_url, decode_responses=False)
+        await self._rehydrate_pause_state()
         self.strategy.on_start()
-        log.info("paper.driver.started", strategy=self.strategy.name)
+        log.info(
+            "paper.driver.started",
+            strategy=self.strategy.name,
+            paused=self._paused,
+        )
         reconciliation_task = asyncio.create_task(self._reconciliation_loop())
         kill_switch_task = asyncio.create_task(self._kill_switch_loop())
         eval_summary_task = asyncio.create_task(self._eval_summary_loop())
         try:
             async with self._redis.pubsub() as pubsub:
-                await pubsub.subscribe(REDIS_CHANNEL)
+                await pubsub.subscribe(REDIS_CHANNEL, self._control_channel)
                 async for msg in pubsub.listen():
                     if msg is None or msg.get("type") != "message":
+                        continue
+                    channel = (
+                        msg["channel"].decode()
+                        if isinstance(msg["channel"], bytes | bytearray)
+                        else msg["channel"]
+                    )
+                    if channel == self._control_channel:
+                        self._handle_control_message(msg["data"])
                         continue
                     try:
                         tick_dict = json.loads(msg["data"])
@@ -108,6 +127,58 @@ class PaperDriver:
             eval_summary_task.cancel()
             self.strategy.on_stop()
 
+    async def _rehydrate_pause_state(self) -> None:
+        try:
+            async with acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT state FROM trading.strategy_state WHERE strategy_id = $1",
+                    self.strategy.name,
+                )
+        except Exception as e:
+            log.warning("paper.driver.rehydrate_fail", err=str(e))
+            return
+        if row is None or row["state"] is None:
+            return
+        state = row["state"]
+        if isinstance(state, str):
+            try:
+                state = json.loads(state)
+            except Exception:
+                state = {}
+        self._paused = bool(state.get("paused", False))
+        if self._paused:
+            log.warning(
+                "paper.driver.rehydrated_paused",
+                strategy=self.strategy.name,
+                by=state.get("by"),
+            )
+
+    def _handle_control_message(self, raw) -> None:
+        try:
+            if isinstance(raw, bytes | bytearray):
+                raw = raw.decode()
+            payload = json.loads(raw)
+        except Exception:
+            log.warning("paper.driver.control.bad_payload", raw=str(raw)[:200])
+            return
+        action = payload.get("action")
+        if action == "pause":
+            self._paused = True
+            log.warning(
+                "paper.driver.paused",
+                strategy=self.strategy.name,
+                by=payload.get("by"),
+            )
+        elif action == "resume":
+            self._paused = False
+            log.info(
+                "paper.driver.resumed",
+                strategy=self.strategy.name,
+                by=payload.get("by"),
+            )
+        else:
+            log.warning("paper.driver.control.unknown_action", action=action)
+
     async def _eval_summary_loop(self) -> None:
         """Flush eval counters every 60 s. Makes silent filtering visible."""
         while True:
@@ -122,6 +193,7 @@ class PaperDriver:
                 ticks=self._eval_counts.get("ticks", 0),
                 out_of_window=self._eval_counts.get("out_of_window", 0),
                 in_entry_window=self._eval_counts.get("in_entry_window", 0),
+                paused_skip=self._eval_counts.get("paused_skip", 0),
                 risk_skip=self._eval_counts.get("risk_skip", 0),
                 strategy_skip=self._eval_counts.get("strategy_skip", 0),
                 enters=self._eval_counts.get("enter", 0),
@@ -146,6 +218,13 @@ class PaperDriver:
 
         self._roll_day(ctx.ts)
         self._bump_counter("ticks")
+
+        # Pause gate (ADR 0009). Bump counter + return BEFORE risk/strategy so
+        # the pause is visible in the 60 s eval summary. Invariant I.1 preserved:
+        # strategy is never invoked while paused.
+        if self._paused:
+            self._bump_counter("paused_skip", reason="paused")
+            return
 
         # Update heartbeat counters.
         self.heartbeat.n_open_positions = len(self._open_positions)
@@ -276,9 +355,12 @@ class PaperDriver:
             self._trade_taken.clear()
 
     async def _kill_switch_loop(self) -> None:
-        """Watch the kill switch file and emit transition alerts."""
+        """Watch the kill switch files (dual path per ADR 0009) and emit
+        transition alerts."""
+        from trading.engine.node import KILL_SWITCH_PATHS
+
         while True:
-            present = os.path.exists("/etc/trading-system/KILL_SWITCH")
+            present = any(os.path.exists(p) for p in KILL_SWITCH_PATHS)
             if present and not self._kill_switch_last_state:
                 await self.tg.send(T.kill_switch_on(datetime.now(tz=UTC).isoformat()))
             elif not present and self._kill_switch_last_state:

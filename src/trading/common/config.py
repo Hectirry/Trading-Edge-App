@@ -35,6 +35,19 @@ class Settings(BaseSettings):
         default=9000, description="Prometheus metrics port, internal net only"
     )
 
+    api_token: str = Field(default="", description="X-TEA-Token auth for tea-api")
+    api_base_url: str = Field(
+        default="http://tea-api:8000",
+        description="Internal base URL for tea-api; telegram bot uses this to dispatch",
+    )
+    dashboard_public_url: str = Field(
+        default="https://187-124-130-221.nip.io",
+        description="Public base URL the bot uses when linking back to /research/<id>",
+    )
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_authorized_users: str = ""  # CSV of user_ids
+
     @property
     def pg_dsn(self) -> str:
         return f"postgresql://{self.pg_user}:{self.pg_password}@{self.pg_host}:{self.pg_port}/{self.pg_db}"

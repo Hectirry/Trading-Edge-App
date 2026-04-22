@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}new backtest · TEA{% endblock %}
+{% block content %}
+<div class="max-w-2xl">
+  <h1 class="text-lg font-semibold mb-4">launch backtest</h1>
+
+  <form hx-post="/api/v1/backtests"
+        hx-ext="json-enc"
+        hx-headers='{"Content-Type":"application/json"}'
+        hx-swap="none"
+        x-data="{ source: 'polybot_sqlite' }"
+        @htmx:after-request.camel="
+          if ($event.detail.successful) {
+            const r = JSON.parse($event.detail.xhr.responseText);
+            window.location = '/research/jobs/' + r.job_id;
+          } else {
+            alert('failed: ' + $event.detail.xhr.responseText);
+          }"
+        class="space-y-4">
+
+    <label class="block">
+      <span class="text-slate-400">strategy</span>
+      <select name="strategy" required
+              class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-3 py-2">
+        {% for s in strategies %}
+          <option value="{{ s.name }}">{{ s.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="block">
+      <span class="text-slate-400">params_file</span>
+      <input name="params_file" required placeholder="config/strategies/pbt5m_imbalance_v3.toml"
+             class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-3 py-2" />
+    </label>
+
+    <label class="block">
+      <span class="text-slate-400">source</span>
+      <select name="source" x-model="source" required
+              class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-3 py-2">
+        <option value="polybot_sqlite">polybot_sqlite</option>
+        <option value="paper_ticks">paper_ticks</option>
+      </select>
+    </label>
+
+    <label class="block" x-show="source === 'polybot_sqlite'">
+      <span class="text-slate-400">polybot_db (path in container)</span>
+      <input name="polybot_db" placeholder="/polybot-btc5m-data/polybot_agent.db"
+             class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-3 py-2" />
+    </label>
+
+    <div class="grid grid-cols-2 gap-4">
+      <label class="block">
+        <span class="text-slate-400">from_ts (ISO)</span>
+        <input name="from_ts" required placeholder="2026-04-10T00:00:00Z"
+               class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-3 py-2" />
+      </label>
+      <label class="block">
+        <span class="text-slate-400">to_ts (ISO)</span>
+        <input name="to_ts" required placeholder="2026-04-22T00:00:00Z"
+               class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-3 py-2" />
+      </label>
+    </div>
+
+    <label class="inline-flex items-center gap-2">
+      <input type="checkbox" name="slug_encodes_open_ts" />
+      <span class="text-slate-400">slug encodes open_ts (BTC-Tendencia only)</span>
+    </label>
+
+    <button type="submit" class="bg-emerald-500 text-slate-900 font-semibold px-4 py-2 rounded">launch</button>
+    <a href="/research" class="text-slate-400 ml-3">cancel</a>
+  </form>
+
+  <script>
+    // Inline json-enc-ish shim: serialize form to JSON body, avoids htmx-ext-json-enc.
+    document.body.addEventListener('htmx:configRequest', (evt) => {
+      if (evt.detail.verb === 'post' && evt.detail.headers['Content-Type'] === 'application/json') {
+        const obj = {};
+        const form = evt.detail.elt;
+        for (const [k, v] of new FormData(form).entries()) {
+          if (k === 'slug_encodes_open_ts') { obj[k] = true; continue; }
+          if (v === '') continue;
+          obj[k] = v;
+        }
+        if (!('slug_encodes_open_ts' in obj)) obj.slug_encodes_open_ts = false;
+        evt.detail.parameters = {};
+        evt.detail.body = JSON.stringify(obj);
+      }
+    });
+  </script>
+</div>
+{% endblock %}

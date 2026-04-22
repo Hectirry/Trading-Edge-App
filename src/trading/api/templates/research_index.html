@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}backtests · TEA{% endblock %}
+{% block content %}
+<div x-data="{ selected: new Set() }" class="space-y-4">
+
+  <div class="flex flex-wrap items-end gap-4">
+    <form method="get" action="/research" class="flex gap-3 items-end">
+      <label>
+        <span class="block text-slate-400 text-xs">strategy</span>
+        <select name="strategy" class="bg-slate-900 border border-slate-700 rounded px-2 py-1">
+          <option value="">all</option>
+          {% for s in strategies %}
+            <option value="{{ s.name }}" {% if selected_strategy == s.name %}selected{% endif %}>{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span class="block text-slate-400 text-xs">status</span>
+        <select name="status" class="bg-slate-900 border border-slate-700 rounded px-2 py-1">
+          <option value="">all</option>
+          {% for st in ["completed","running","failed","queued"] %}
+            <option value="{{ st }}" {% if selected_status == st %}selected{% endif %}>{{ st }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button class="bg-slate-200 text-slate-900 px-3 py-1 rounded">filter</button>
+    </form>
+    <div class="ml-auto space-x-2">
+      <a href="/research/new" class="bg-emerald-500 text-slate-900 font-semibold px-3 py-1 rounded">+ new backtest</a>
+      <button
+        @click="if (selected.size < 2) { alert('pick 2 or 3'); return; }
+                window.location = '/research-compare?ids=' + Array.from(selected).join(',')"
+        x-bind:disabled="selected.size < 2 || selected.size > 3"
+        class="bg-slate-700 px-3 py-1 rounded disabled:opacity-40">compare (<span x-text="selected.size"></span>)</button>
+    </div>
+  </div>
+
+  <table class="w-full text-left border-collapse">
+    <thead class="text-slate-400 border-b border-slate-800">
+      <tr>
+        <th class="py-2 w-8"></th>
+        <th class="py-2">strategy</th>
+        <th class="py-2">started</th>
+        <th class="py-2">status</th>
+        <th class="py-2 text-right">n</th>
+        <th class="py-2 text-right">pnl</th>
+        <th class="py-2 text-right">win%</th>
+        <th class="py-2 text-right">sharpe</th>
+        <th class="py-2 text-right">mdd</th>
+        <th class="py-2"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in backtests %}
+        <tr class="border-b border-slate-900 hover:bg-slate-900">
+          <td class="py-1">
+            <input type="checkbox"
+                   @change="$event.target.checked ? selected.add('{{ b.id }}') : selected.delete('{{ b.id }}'); selected = new Set(selected)" />
+          </td>
+          <td class="py-1">{{ b.strategy_name }}</td>
+          <td class="py-1 text-slate-400">{{ b.started_at.isoformat() if b.started_at else '-' }}</td>
+          <td class="py-1">
+            <span class="px-2 py-0.5 rounded text-xs
+              {% if b.status == 'completed' %}bg-emerald-900 text-emerald-300
+              {% elif b.status == 'running' %}bg-amber-900 text-amber-300
+              {% elif b.status == 'failed' %}bg-red-900 text-red-300
+              {% else %}bg-slate-800 text-slate-300{% endif %}">{{ b.status }}</span>
+          </td>
+          <td class="py-1 text-right">{{ b.n_trades if b.n_trades is not none else '-' }}</td>
+          <td class="py-1 text-right {% if b.total_pnl is not none and b.total_pnl < 0 %}text-red-400{% elif b.total_pnl is not none and b.total_pnl > 0 %}text-emerald-400{% endif %}">
+            {{ '%.2f'|format(b.total_pnl) if b.total_pnl is not none else '-' }}
+          </td>
+          <td class="py-1 text-right">{{ '%.1f%%'|format(b.win_rate * 100) if b.win_rate is not none else '-' }}</td>
+          <td class="py-1 text-right">{{ '%.2f'|format(b.sharpe_per_trade) if b.sharpe_per_trade is not none else '-' }}</td>
+          <td class="py-1 text-right">{{ '%.2f'|format(b.mdd_usd) if b.mdd_usd is not none else '-' }}</td>
+          <td class="py-1"><a href="/research/{{ b.id }}" class="text-sky-400 hover:underline">view</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="10" class="py-4 text-slate-500 text-center">no backtests match filter</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <section class="mt-8">
+    <h2 class="text-slate-400 mb-2">strategies</h2>
+    <table class="w-full text-left">
+      <thead class="text-slate-500 text-xs border-b border-slate-800">
+        <tr><th class="py-1">name</th><th class="py-1">enabled</th><th class="py-1">paused</th><th class="py-1">params_file</th></tr>
+      </thead>
+      <tbody>
+        {% for s in strategies %}
+          <tr class="border-b border-slate-900">
+            <td class="py-1">{{ s.name }}</td>
+            <td class="py-1">{{ 'yes' if s.enabled else 'no' }}</td>
+            <td class="py-1 {% if s.paused %}text-amber-400{% endif %}">{{ 'yes' if s.paused else 'no' }}</td>
+            <td class="py-1 text-slate-400">{{ s.params_file }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

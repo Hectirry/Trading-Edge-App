@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ bt.strategy_name }} · {{ bt.id[:8] }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="flex items-baseline justify-between">
+    <h1 class="text-lg font-semibold">{{ bt.strategy_name }}
+      <span class="text-slate-500 font-normal">· {{ bt.id }}</span></h1>
+    <span class="px-2 py-0.5 rounded text-xs
+      {% if bt.status == 'completed' %}bg-emerald-900 text-emerald-300
+      {% elif bt.status == 'running' %}bg-amber-900 text-amber-300
+      {% elif bt.status == 'failed' %}bg-red-900 text-red-300
+      {% else %}bg-slate-800 text-slate-300{% endif %}">{{ bt.status }}</span>
+  </div>
+
+  <dl class="grid grid-cols-4 gap-x-4 gap-y-2 max-w-3xl">
+    <dt class="text-slate-500">started</dt><dd>{{ bt.started_at.isoformat() if bt.started_at else '-' }}</dd>
+    <dt class="text-slate-500">ended</dt><dd>{{ bt.ended_at.isoformat() if bt.ended_at else '-' }}</dd>
+    <dt class="text-slate-500">dataset from</dt><dd>{{ bt.dataset_from }}</dd>
+    <dt class="text-slate-500">dataset to</dt><dd>{{ bt.dataset_to }}</dd>
+    <dt class="text-slate-500">n trades</dt><dd>{{ bt.n_trades if bt.n_trades is not none else '-' }}</dd>
+    <dt class="text-slate-500">total pnl</dt>
+    <dd class="{% if bt.total_pnl is not none and bt.total_pnl < 0 %}text-red-400{% elif bt.total_pnl is not none and bt.total_pnl > 0 %}text-emerald-400{% endif %}">
+      {{ '%.4f'|format(bt.total_pnl) if bt.total_pnl is not none else '-' }}
+    </dd>
+    <dt class="text-slate-500">win rate</dt>
+    <dd>{{ '%.1f%%'|format(bt.win_rate * 100) if bt.win_rate is not none else '-' }}</dd>
+    <dt class="text-slate-500">sharpe / trade</dt>
+    <dd>{{ '%.3f'|format(bt.sharpe_per_trade) if bt.sharpe_per_trade is not none else '-' }}</dd>
+    <dt class="text-slate-500">mdd usd</dt>
+    <dd>{{ '%.2f'|format(bt.mdd_usd) if bt.mdd_usd is not none else '-' }}</dd>
+    <dt class="text-slate-500">report_path</dt>
+    <dd class="col-span-3 font-mono text-slate-400">{{ bt.report_path or '-' }}</dd>
+  </dl>
+
+  <section>
+    <h2 class="text-slate-400 mb-2">trades (first {{ trades|length }})</h2>
+    {% if trades %}
+    <table class="w-full text-left text-xs">
+      <thead class="text-slate-500 border-b border-slate-800">
+        <tr>
+          <th class="py-1 text-right">#</th>
+          <th class="py-1">instrument</th>
+          <th class="py-1">side</th>
+          <th class="py-1">entry_ts</th>
+          <th class="py-1 text-right">entry_px</th>
+          <th class="py-1">exit_ts</th>
+          <th class="py-1 text-right">exit_px</th>
+          <th class="py-1 text-right">pnl</th>
+          <th class="py-1 text-right">fees</th>
+          <th class="py-1 text-right">edge_bps</th>
+          <th class="py-1">regime</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in trades %}
+        <tr class="border-b border-slate-900">
+          <td class="py-1 text-right text-slate-500">{{ t.trade_idx }}</td>
+          <td class="py-1">{{ t.instrument }}</td>
+          <td class="py-1">{{ t.strategy_side }}</td>
+          <td class="py-1 text-slate-400">{{ t.entry_ts.isoformat() if t.entry_ts else '-' }}</td>
+          <td class="py-1 text-right">{{ '%.4f'|format(t.entry_price) if t.entry_price is not none else '-' }}</td>
+          <td class="py-1 text-slate-400">{{ t.exit_ts.isoformat() if t.exit_ts else '-' }}</td>
+          <td class="py-1 text-right">{{ '%.4f'|format(t.exit_price) if t.exit_price is not none else '-' }}</td>
+          <td class="py-1 text-right {% if t.pnl is not none and t.pnl < 0 %}text-red-400{% elif t.pnl is not none and t.pnl > 0 %}text-emerald-400{% endif %}">
+            {{ '%.4f'|format(t.pnl) if t.pnl is not none else '-' }}
+          </td>
+          <td class="py-1 text-right">{{ '%.4f'|format(t.fees) if t.fees is not none else '-' }}</td>
+          <td class="py-1 text-right">{{ '%.1f'|format(t.edge_bps) if t.edge_bps is not none else '-' }}</td>
+          <td class="py-1 text-slate-400">{{ t.vol_regime or '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="text-slate-500">no trades recorded.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

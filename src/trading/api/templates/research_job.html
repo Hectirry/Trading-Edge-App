@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}job {{ job.id }} · TEA{% endblock %}
+{% block content %}
+<div class="max-w-3xl space-y-4"
+     hx-get="/api/v1/jobs/{{ job.id }}"
+     hx-trigger="every 2s"
+     hx-swap="none"
+     @htmx:after-request.camel="
+       if ($event.detail.successful) {
+         const j = JSON.parse($event.detail.xhr.responseText);
+         document.getElementById('jstatus').textContent = j.status;
+         document.getElementById('jstdout').textContent = j.stdout_tail || '';
+         document.getElementById('jstderr').textContent = j.stderr_tail || '';
+         if (j.backtest_id) {
+           const a = document.getElementById('jlink');
+           a.href = '/research/' + j.backtest_id;
+           a.classList.remove('hidden');
+         }
+         if (['completed','failed','timeout'].includes(j.status)) {
+           // stop polling
+           document.querySelector('[hx-trigger]').removeAttribute('hx-trigger');
+           htmx.process(document.body);
+         }
+       }">
+
+  <h1 class="text-lg font-semibold">backtest job · {{ job.strategy_name }}</h1>
+
+  <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-slate-300">
+    <dt class="text-slate-500">id</dt><dd class="font-mono">{{ job.id }}</dd>
+    <dt class="text-slate-500">status</dt><dd id="jstatus">{{ job.status }}</dd>
+    <dt class="text-slate-500">params_file</dt><dd>{{ job.params_file }}</dd>
+    <dt class="text-slate-500">source</dt><dd>{{ job.data_source }}</dd>
+    <dt class="text-slate-500">from_ts</dt><dd>{{ job.from_ts }}</dd>
+    <dt class="text-slate-500">to_ts</dt><dd>{{ job.to_ts }}</dd>
+    <dt class="text-slate-500">requested_by</dt><dd>{{ job.requested_by }}</dd>
+    <dt class="text-slate-500">created_at</dt><dd>{{ job.created_at }}</dd>
+  </dl>
+
+  <a id="jlink" href="#" class="hidden inline-block bg-emerald-500 text-slate-900 font-semibold px-3 py-1 rounded">
+    view report →
+  </a>
+
+  <section>
+    <h2 class="text-slate-400 text-xs uppercase mb-1">stdout tail</h2>
+    <pre id="jstdout" class="bg-slate-900 border border-slate-800 rounded p-3 overflow-auto text-xs whitespace-pre-wrap">{{ job.stdout_tail or '' }}</pre>
+  </section>
+
+  <section>
+    <h2 class="text-slate-400 text-xs uppercase mb-1">stderr tail</h2>
+    <pre id="jstderr" class="bg-slate-900 border border-red-900/50 rounded p-3 overflow-auto text-xs whitespace-pre-wrap">{{ job.stderr_tail or '' }}</pre>
+  </section>
+</div>
+{% endblock %}

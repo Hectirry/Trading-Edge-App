@@ -137,15 +137,22 @@ send orders. Default (file absent) = engine operates normally. Fail-safe
 by design: accidental deletion merely stops blocking; it cannot
 unblock something unsafe.
 
+Phase 4 (ADR 0009) adds a second path writable from the API container.
+Engine + exec client check BOTH paths with OR semantics; either
+arms the switch.
+
 ```
-# Activate (block all order sending)
-sudo touch /etc/trading-system/KILL_SWITCH
+# Operator (sudo-only):
+sudo touch /etc/trading-system/KILL_SWITCH        # arm
+sudo rm    /etc/trading-system/KILL_SWITCH        # disarm
 
-# Deactivate
-sudo rm /etc/trading-system/KILL_SWITCH
+# API / Telegram bot (no sudo, writes to the tea_control volume):
+POST /api/v1/killswitch     { "confirm": "sí lo entiendo" }
+POST /api/v1/killswitch_off
+# touches / removes /var/tea/control/KILL_SWITCH
 
-# Verify
-ls -l /etc/trading-system/KILL_SWITCH
+# Verify both paths:
+ls -l /etc/trading-system/KILL_SWITCH /var/tea/control/KILL_SWITCH 2>/dev/null
 ```
 
 Phase 0 has no trading-engine tick yet — convention and path are
@@ -569,6 +576,108 @@ has n_trades_oos < 20.
   `strategy_id` for the current UTC day.
 - "Cumulative PnL per strategy (24h)" — time series split by
   `strategy_id` over the last 24 h.
+
+## Phase 4 — Dashboard, Prometheus, interactive Telegram
+
+See ADR 0009 for rationale. Nine containers now run (9 vs the Phase 0
+seven); two new services and one heavy upgrade.
+
+### Services added / upgraded
+
+- **tea-api** (`tea-api:0.4.0`) — FastAPI + Jinja2 + HTMX + Alpine.js
+  dashboard at `https://187-124-130-221.nip.io/research`. JSON API at
+  `/api/v1/*`. Auth: `X-TEA-Token` header or `tea_token` cookie.
+- **tea-prometheus** (`prom/prometheus:v3.1.0`) — scrapes
+  `tea-ingestor:9000/metrics` and host `node_exporter` at
+  `host.docker.internal:9100`. 30-day retention, volume
+  `tea_prom_data`. Revokes the Phase 0 "no Prom" prohibition.
+- **tea-node-exporter** (`prom/node-exporter:v1.8.2`) — host-mode
+  container for CPU/RAM/disk/net metrics. Listens on
+  `127.0.0.1:9100`; never reachable from off-host.
+- **tea-telegram-bot** — now runs both the heartbeat/cron watcher AND
+  the interactive command poller (9 commands).
+
+### Secrets added
+
+```
+TEA_API_TOKEN=<openssl rand -hex 32>   # dashboard + bot→api auth
+TEA_TELEGRAM_AUTHORIZED_USERS=<csv>    # e.g. 6160639204
+```
+
+Generated once via `openssl rand -hex 32`; written to
+`/etc/trading-system/secrets.env` (chmod 600, owned by `coder`).
+Token is shown on stdout once at creation; recover via
+`sudo grep TEA_API_TOKEN /etc/trading-system/secrets.env`.
+
+### Dual-path KILL_SWITCH
+
+Two files are checked (OR) by engine + paper exec client:
+
+```
+/etc/trading-system/KILL_SWITCH       # host-managed, sudo-only
+/var/tea/control/KILL_SWITCH          # tea_control volume, writable by tea-api
+```
+
+Operator flow: ssh + `sudo touch /etc/trading-system/KILL_SWITCH`.
+Bot flow: `/killswitch` → confirm `sí lo entiendo` → API writes the
+`/var/tea/control` file. Either path triggers the engine to refuse
+new orders. Remove the file that was touched to clear.
+
+### Pause / resume (Redis pub/sub)
+
+```
+POST /api/v1/strategies/<name>/pause    # sets trading.strategy_state.state.paused=true
+                                        # + publishes on tea:control:<name>
+```
+
+`PaperDriver` subscribes to `tea:control:<strategy_name>`. On boot,
+it rehydrates from `trading.strategy_state`, so a pause set via the
+bot survives a container restart. Paused ticks bump the
+`paused_skip` counter visible in the 60 s `eval_summary` log line.
+Strategy code is not invoked while paused (Invariant I.1 holds).
+
+### Grafana — new dashboards
+
+Auto-provisioned on startup:
+
+- `TEA — System health` — CPU / RAM / disk / load / network / ingestor
+  up, all from Prometheus.
+- `TEA — Market explorer` — upcoming BTC up/down 5m markets, live YES
+  / NO prices for the next-closing market, tick freshness.
+- `TEA — Strategy comparator` — latest completed backtest per
+  strategy, backtest PnL history, paper cumulative PnL by strategy,
+  paper-vs-backtest weekly verdicts.
+
+A second Prometheus datasource (uid `tea-prometheus`) is provisioned
+alongside the existing Postgres one.
+
+### Dashboard usage
+
+1. Browse to `https://187-124-130-221.nip.io/research` (redirects to
+   `/login` on first visit).
+2. Paste `TEA_API_TOKEN` — sets a secure `tea_token` cookie for 7 days.
+3. Index lists completed / running / failed / queued backtests with
+   filters by strategy + status. Checkboxes pick 2–3 rows to compare.
+4. `new` launches a backtest worker (subprocess, 15-min timeout,
+   stdout / stderr tails captured). `research/jobs/<id>` polls every
+   2 s until the run completes and auto-links to the report.
+
+### Telegram interactive commands
+
+Only users listed in `TEA_TELEGRAM_AUTHORIZED_USERS` can invoke
+commands. All others get `⛔ not authorized` + a log line.
+
+| Command                | Effect |
+|------------------------|--------|
+| `/status`              | heartbeat age, kill-switch state, open positions, pnl today |
+| `/positions`           | open paper positions list |
+| `/trades [N]`          | last N (default 10) paper trades |
+| `/pnl [hours]`         | pnl over last H hours (default 24) |
+| `/pause <strategy>`    | pause via API (publishes on Redis) |
+| `/resume <strategy>`   | resume via API |
+| `/killswitch`          | 2-step; requires exact phrase `sí lo entiendo` within 120 s |
+| `/backtest ...`        | queues async job, DMs a report link on completion |
+| `/help`                | command reference |
 
 ## Known caveats / Phase 0 pending items
 

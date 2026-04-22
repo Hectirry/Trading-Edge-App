@@ -25,7 +25,12 @@ from trading.engine.types import Side
 
 log = get_logger(__name__)
 
-KILL_SWITCH_PATH = "/etc/trading-system/KILL_SWITCH"
+# Dual-path KILL_SWITCH (ADR 0009). OR over host + API-writable paths.
+KILL_SWITCH_PATHS: tuple[str, ...] = (
+    "/etc/trading-system/KILL_SWITCH",
+    "/var/tea/control/KILL_SWITCH",
+)
+KILL_SWITCH_PATH = KILL_SWITCH_PATHS[0]
 STALE_BOOK_SECONDS = 10.0
 LATE_ENTRY_GUARD = 5.0  # reject if t_in_window > latest - 5s
 LATENCY_MS = 100
@@ -62,7 +67,7 @@ class SimulatedExecutionClient:
 
     @staticmethod
     def kill_switch_active() -> bool:
-        return os.path.exists(KILL_SWITCH_PATH)
+        return any(os.path.exists(p) for p in KILL_SWITCH_PATHS)
 
     async def try_enter(
         self,

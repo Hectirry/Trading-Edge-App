@@ -52,11 +52,25 @@ class PaperNode:
         pass
 
 
-KILL_SWITCH_PATH = "/etc/trading-system/KILL_SWITCH"
+# Dual-path KILL_SWITCH (ADR 0009). Engine reads both; API writes the
+# /var/tea/control path (it cannot write /etc/ read-only mount).
+KILL_SWITCH_PATHS: tuple[str, ...] = (
+    "/etc/trading-system/KILL_SWITCH",
+    "/var/tea/control/KILL_SWITCH",
+)
+# Back-compat alias: some logs/messages still reference the primary path.
+KILL_SWITCH_PATH = KILL_SWITCH_PATHS[0]
 
 
 def kill_switch_active() -> bool:
-    return Path(KILL_SWITCH_PATH).exists()
+    return any(Path(p).exists() for p in KILL_SWITCH_PATHS)
+
+
+def kill_switch_which() -> str | None:
+    for p in KILL_SWITCH_PATHS:
+        if Path(p).exists():
+            return p
+    return None
 
 
 def check_live_file() -> bool:
@@ -75,9 +89,10 @@ def create_trading_node(
         return BacktestNode(strategy_name)
 
     if kill_switch_active():
+        which = kill_switch_which()
         raise RuntimeError(
             "KILL_SWITCH active — refusing to start paper/live node. "
-            f"Remove {KILL_SWITCH_PATH} to re-enable."
+            f"Remove {which} to re-enable."
         )
 
     if mode == "paper":
