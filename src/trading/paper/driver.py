@@ -72,12 +72,22 @@ class PaperDriver:
         # Kill switch state for edge-triggered alerts.
         self._kill_switch_last_state: bool = False
 
+        # Eval counters. Flushed on a 60s cadence so silent filtering is visible.
+        self._eval_counts: dict[str, int] = {}
+        self._eval_skip_reasons: dict[str, int] = {}
+
+    def _bump_counter(self, bucket: str, reason: str | None = None) -> None:
+        self._eval_counts[bucket] = self._eval_counts.get(bucket, 0) + 1
+        if reason:
+            self._eval_skip_reasons[reason] = self._eval_skip_reasons.get(reason, 0) + 1
+
     async def run(self) -> None:
         self._redis = redis.from_url(self.redis_url, decode_responses=False)
         self.strategy.on_start()
         log.info("paper.driver.started", strategy=self.strategy.name)
         reconciliation_task = asyncio.create_task(self._reconciliation_loop())
         kill_switch_task = asyncio.create_task(self._kill_switch_loop())
+        eval_summary_task = asyncio.create_task(self._eval_summary_loop())
         try:
             async with self._redis.pubsub() as pubsub:
                 await pubsub.subscribe(REDIS_CHANNEL)
@@ -88,11 +98,39 @@ class PaperDriver:
                         tick_dict = json.loads(msg["data"])
                     except Exception:
                         continue
-                    await self._handle_tick(tick_dict)
+                    try:
+                        await self._handle_tick(tick_dict)
+                    except Exception as e:
+                        log.exception("paper.driver.handle_tick.err", err=str(e))
         finally:
             reconciliation_task.cancel()
             kill_switch_task.cancel()
+            eval_summary_task.cancel()
             self.strategy.on_stop()
+
+    async def _eval_summary_loop(self) -> None:
+        """Flush eval counters every 60 s. Makes silent filtering visible."""
+        while True:
+            await asyncio.sleep(60)
+            if not self._eval_counts and not self._eval_skip_reasons:
+                continue
+            top_reasons = sorted(
+                self._eval_skip_reasons.items(), key=lambda kv: kv[1], reverse=True
+            )[:5]
+            log.info(
+                "paper.driver.eval_summary",
+                ticks=self._eval_counts.get("ticks", 0),
+                out_of_window=self._eval_counts.get("out_of_window", 0),
+                in_entry_window=self._eval_counts.get("in_entry_window", 0),
+                risk_skip=self._eval_counts.get("risk_skip", 0),
+                strategy_skip=self._eval_counts.get("strategy_skip", 0),
+                enters=self._eval_counts.get("enter", 0),
+                fills=self._eval_counts.get("fill", 0),
+                fill_miss=self._eval_counts.get("fill_miss", 0),
+                top_reasons=top_reasons,
+            )
+            self._eval_counts.clear()
+            self._eval_skip_reasons.clear()
 
     async def _handle_tick(self, tick: dict) -> None:
         ctx = _tick_from_dict(tick)
@@ -107,6 +145,7 @@ class PaperDriver:
         indicators.update(ctx)
 
         self._roll_day(ctx.ts)
+        self._bump_counter("ticks")
 
         # Update heartbeat counters.
         self.heartbeat.n_open_positions = len(self._open_positions)
@@ -114,36 +153,56 @@ class PaperDriver:
 
         # Daily pause gate.
         if self._daily_pnl <= self.cfg.daily_pause_pnl_threshold:
-            # Threshold in USD (e.g. -50.0); already hit → no new entries today.
             if slug not in self._open_positions and slug not in self._trade_taken:
-                self._trade_taken.add(slug)  # won't try this market again today
-            # Still need to settle open positions if any.
-            pass
+                self._trade_taken.add(slug)
 
-        # Try enter if no open position on this market and entry window open.
+        # Settle or skip if post-window / already-traded.
         if slug in self._open_positions:
             if ctx.t_in_window >= 300:
                 await self._settle_position(slug, ctx)
             return
         if slug in self._trade_taken:
             if ctx.t_in_window >= 300:
-                # Past close but no position, nothing to do.
                 self._trade_taken.discard(slug)
                 self._cleanup_market(slug)
             return
         if not (self.cfg.earliest_entry_t <= ctx.t_in_window <= self.cfg.latest_entry_t):
+            self._bump_counter("out_of_window")
             if ctx.t_in_window > 300:
                 self._cleanup_market(slug)
             return
         if self._daily_pnl <= self.cfg.daily_pause_pnl_threshold:
+            self._bump_counter("risk_skip", reason="daily_pause")
             return
 
-        # Risk gate, then strategy.
+        self._bump_counter("in_entry_window")
+
+        # Risk gate, then strategy. Count + bucket reasons so 60 s summary
+        # reveals whether skips concentrate on a specific filter.
         allowed, reason = self.risk.can_enter(ctx)
         if not allowed:
+            tag = reason.split(" ")[0] if reason else "unknown"
+            # Normalize common tags to a short bucket.
+            if "cooldown" in reason:
+                tag = "cooldown"
+            elif "z_score" in reason:
+                tag = "risk_z_score"
+            elif "edge" in reason:
+                tag = "risk_edge"
+            elif "spread" in reason:
+                tag = "risk_spread"
+            elif "depth" in reason:
+                tag = "risk_depth"
+            elif "circuit_breaker" in reason or "daily_loss_limit" in reason:
+                tag = "risk_circuit"
+            elif "cool-off" in reason:
+                tag = "risk_cool_off"
+            self._bump_counter("risk_skip", reason=tag)
             return
         decision = self.strategy.should_enter(ctx)
         if decision.action is not Action.ENTER:
+            short = decision.reason.split(" (")[0] if decision.reason else "strategy_skip"
+            self._bump_counter("strategy_skip", reason=short)
             return
 
         book_last_ts = ctx.ts  # feeds keep this updated via tick recorder; approximate
@@ -160,10 +219,13 @@ class PaperDriver:
             latest_entry_t=float(self.cfg.latest_entry_t),
         )
         if pos is None:
+            self._bump_counter("fill_miss")
             return
         self._open_positions[slug] = pos
         self._trade_taken.add(slug)
         self._daily_trades += 1
+        self._bump_counter("enter")
+        self._bump_counter("fill")
         await self.tg.send(
             T.trade_open(
                 slug=slug, side=pos.side.value, price=pos.entry_price, stake_usd=pos.stake_usd

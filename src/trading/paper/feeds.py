@@ -241,16 +241,23 @@ async def refresh_markets_loop(state: FeedState) -> None:
 
 
 async def _refresh_once(client: httpx.AsyncClient, state: FeedState) -> None:
-    # Grab the 100 newest events by endDate. `ascending=false` is essential
-    # — `true` returns archived 2025 events first. `closed=false` drops the
-    # already-resolved ones in the top of the list.
+    # Ascending by endDate, floored at now-5min, covers:
+    #   - the market currently in its 5-minute window (entry gate lives here)
+    #   - the next ~100 upcoming markets
+    # `ascending=false` skips the current market entirely because 100 upcoming
+    # markets exist 8+ hours out and bury it — the paper driver then observes
+    # only `t_in_window=0` ticks and never evaluates.
+    from datetime import UTC, datetime, timedelta
+
+    end_date_min = (datetime.now(tz=UTC) - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     r = await client.get(
         "https://gamma-api.polymarket.com/events",
         params={
             "series_id": 10684,
-            "order": "endDate",
-            "ascending": "false",
             "closed": "false",
+            "order": "endDate",
+            "ascending": "true",
+            "end_date_min": end_date_min,
             "limit": 100,
         },
     )
