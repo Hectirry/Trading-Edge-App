@@ -177,6 +177,16 @@ sudo -e /etc/trading-system/secrets.env
 docker compose up -d                                 # pick up new env
 ```
 
+Compose interpolation: the project dir has a symlink
+`/home/coder/Trading-Edge-App/.env -> /etc/trading-system/secrets.env`.
+Docker Compose reads it for variable substitution at config time. The
+same file is also mounted into each container via `env_file`, so a
+single source of truth governs both paths. If the symlink is deleted,
+`${TEA_*}` interpolation breaks; recreate with:
+```
+ln -sf /etc/trading-system/secrets.env /home/coder/Trading-Edge-App/.env
+```
+
 ---
 
 ## Gitleaks
@@ -195,8 +205,26 @@ gitleaks detect --source . --verbose
 ## Known caveats / Phase 0 pending items
 
 - B2 bucket not yet configured. `backup_db.sh` stores locally; remote
-  upload is a no-op until `TEA_B2_*` env vars are set.
+  upload is a no-op until `TEA_B2_*` env vars are set. Acceptance
+  criterion 5 ("backup deposita en bucket") remains **open** until
+  then.
 - Grafana relies on external Traefik (openclaw) for TLS. If that
   Traefik is removed or reconfigured, Grafana loses HTTPS ingress.
 - RAM on VPS is tight (7.8 GiB total). A 2 GiB swapfile mitigates. If
   future phases add ingestor + engine + Nautilus, re-evaluate capacity.
+- Secrets file owner is `coder:coder` (not `root:root`) so Docker
+  Compose, running as `coder`, can read it. Permissions remain `600`,
+  so no other local user can read. Docker daemon already runs as
+  root-equivalent for any member of the `docker` group, so this does
+  not change the effective blast radius.
+
+## Phase 0 acceptance — status
+
+| # | Criterion                                      | Status |
+|---|------------------------------------------------|--------|
+| 1 | `docker compose ps` shows 7 containers Up      | pass (ADR 0001) |
+| 2 | Grafana HTTPS with valid (non-self-signed) cert | pass (Let's Encrypt R13) |
+| 3 | Grafana panel with `SELECT now()` returns data | pass |
+| 4 | Trivial commit to `main` triggers CI and passes | pass (lint + tests + security green) |
+| 5 | `backup_db.sh` deposits backup in bucket       | **open — B2 pending** |
+| 6 | `down && up -d` leaves state unchanged, data intact | pass |
