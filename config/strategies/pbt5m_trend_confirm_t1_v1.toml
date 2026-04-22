@@ -66,13 +66,29 @@ decision_interval_s = 1
 
 [fill_model]
 slippage_bps = 10.0
-fill_probability = 0.95
+# polybot-agent's backtest ignores fill_probability — it always fills a
+# valid ENTER (simulate_fill in core/backtest_engine.py states this
+# explicitly). fill_probability=1.0 here matches for bit-exact parity.
+# Paper/live still run through their own probabilistic executor; this
+# value affects the backtest replay only.
+fill_probability = 1.0
+# polybot-agent's simulate_pnl subtracts the parabolic fee from gross pnl;
+# polybot-btc5m's backtest does NOT. Strategies declare the convention here
+# so the TEA driver matches each source exactly.
+apply_fee_in_backtest = true
+fee_k = 0.05
 
 [risk]
 # Strategy-specific risk gate. Alert/pause thresholds are applied in the
 # driver from capital_usd * alert_pct / pause_pct below.
 # max_position_size_usd set to 5.0 to mirror BTC-Tendencia-5m/config.yaml
 # top-level cap that actually applies in live (parity requirement).
+#
+# bypass_in_backtest=true — polybot-agent's backtest_engine skips its
+# RiskManager entirely (strategy → simulate_fill direct). Setting this
+# flag makes our Phase 2 backtest_driver match that behavior for
+# bit-exact parity. Live/paper modes still consult the manager.
+bypass_in_backtest = true
 cooldown_seconds = 30
 max_position_size_usd = 5.0
 daily_loss_limit_usd = 50.0

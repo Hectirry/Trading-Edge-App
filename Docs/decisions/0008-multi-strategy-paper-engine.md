@@ -85,6 +85,51 @@ When live execution arrives, the same registry pattern plugs in a real
 capital budgets carry over. The only Phase 6 change is the execution
 path, not the registry topology.
 
+## Addendum (2026-04-22) — Parity reference is the backtest engine, not live trades
+
+Bit-exact parity for `trend_confirm_t1_v1` is measured against a
+**deterministic backtest trade vector** extracted from polybot-agent by
+running its own `core/backtest_engine.run_single_backtest` read-only
+(helper lives at `/tmp/extract_polybot_agent_trades.py`; not part of
+TEA source). Live trades are **correlation-only**: they are captured
+from a specific feed-arrival ordering and an evolving stake/config
+history that is not faithfully reproducible offline, so they are
+expressly NOT a parity target.
+
+To make the TEA backtest_driver match polybot-agent's backtest, two
+per-strategy flags live in the strategy TOML:
+
+- `[risk].bypass_in_backtest = true` — polybot-agent's backtest engine
+  skips its `RiskManager` entirely (strategy → simulate_fill direct).
+  The TEA driver honors this flag so cooldowns and other live-only
+  gates do not veto trades during offline replay. Live/paper still
+  consult the manager.
+- `[fill_model].apply_fee_in_backtest = true` + `fee_k = 0.05` —
+  polybot-agent's `simulate_pnl` subtracts the parabolic fee from
+  gross pnl during backtest. polybot-btc5m's backtest does NOT.
+  Strategies declare the convention so `imbalance_v3` stays fee-free
+  and `trend_confirm_t1_v1` picks up the fee.
+- `[fill_model].fill_probability = 1.0` — polybot-agent always fills
+  in backtest; polybot-btc5m keeps the 0.95 miss rate. Each strategy
+  chooses.
+
+The `backtest_driver.recent_ticks` slice also changed from `[-30:]` to
+the full per-market history (polybot-agent's `replay_window` passes
+`snapshots[:i]`). This is required for `trend_confirm_t1_v1`'s AFML
+features (`frac_size=60`, `cusum_lookback=120`) to compute non-zero
+values. `imbalance_v3` still applies `[-30:]` internally for its
+depth-trend check, so the change is backward-compatible.
+
+Parity status:
+
+- `imbalance_v3` — 305/305 (Phase 2, preserved).
+- `trend_confirm_t1_v1` — 141/141 against polybot-agent backtest trade
+  vector (stable-config window, 2026-04-22). 0 price drift, 0 pnl drift.
+
+A separate "correlation check" probe (`scripts/parity_probe_trend.py`)
+still exists for comparing against live trades; its tolerances are
+documented inline and the probe is NOT a CI gate.
+
 ## Revisit
 
 Revisit if we ever run > 10 strategies concurrently, or if a strategy's

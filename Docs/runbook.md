@@ -523,27 +523,37 @@ docker exec tea-engine python -m trading.cli.backtest \
   --slug-encodes-open-ts
 ```
 
-### Parity note (Phase 3.5 scope)
+### Parity (Phase 3.5 — bit-exact achieved)
 
-Unlike `imbalance_v3` (which had a deterministic backtest JSON as the
-parity reference and achieved 305/305 bit-exact), `trend_confirm_t1_v1`'s
-only available reference is the LIVE `trades` table of the running
-BTC-Tendencia engine. Live trades capture a specific feed-arrival
-ordering and evolving config (stake changed between 1.5 and 5.0 USD
-during the history window), so a bit-exact replay is not expected.
+`trend_confirm_t1_v1` matches polybot-agent's **backtest trade vector**
+**141/141**, 0 price drift, 0 pnl drift. Reference extracted via
+`/tmp/extract_polybot_agent_trades.py` (read-only invocation of
+polybot-agent's own `core/backtest_engine.run_single_backtest`).
+Authoritative parity probe: `scripts/parity_probe_trend_bt.py`.
 
-On the stable-config window (2026-04-22, stake_usd=5.0), the TEA
-replay produces roughly the same count (within ±20 %) and horizon
-distribution as the live trades, with ~40 % slug overlap. The
-divergence is attributed to:
+Three strategy-level flags made this possible (see ADR 0008 addendum):
 
-1. Live decisions use the feed snapshot AT TICK TIME; replay uses
-   post-hoc `ticks` rows that may differ in arrival order.
-2. Live AFML features are recomputed on a rolling deque buffer that
-   includes upstream feature snapshots beyond the current market;
-   replay reconstructs the buffer fresh per market.
-3. Live fills consume CLOB liquidity, replay applies the 95 % prob
-   +10 bps slippage sim.
+- `[risk].bypass_in_backtest = true` — polybot-agent's backtest skips
+  its RiskManager; TEA matches.
+- `[fill_model].apply_fee_in_backtest = true` + `fee_k = 0.05` —
+  polybot-agent subtracts the parabolic fee in backtest PnL.
+- `[fill_model].fill_probability = 1.0` — polybot-agent always fills
+  in backtest (the 0.95 sim is PaperExecutor-only).
+
+One backtest_driver change: `ctx.recent_ticks` now carries the full
+per-market history (previously sliced to `[-30:]`). Required for
+`trend_confirm_t1_v1`'s AFML features (`frac_size=60`,
+`cusum_lookback=120`); backward-compatible with `imbalance_v3`, which
+applies its own `[-30:]` slice inline for the depth-trend check.
+
+The old `scripts/parity_probe_trend.py` compared against LIVE trades;
+that probe is kept as a **correlation check** (not a parity gate),
+because live ordering + evolving stake/config make a bit-exact match
+impossible. Its tolerances are documented in the script and it is not
+part of CI.
+
+`imbalance_v3` stays at 305/305 against its polybot-btc5m JSON; no
+regression from the Phase 3.5 changes.
 
 Walk-forward on 4 d IS / 1 d OOS over the 6-day polybot-agent window
 (2 splits): `unstable` (fold 0 +$24.54 WR 61.7 % vs fold 1 -$13.95

@@ -92,6 +92,7 @@ async def _run(args: argparse.Namespace) -> None:
         risk_manager=risk_manager,
         config_used=cfg,
         seed=args.seed,
+        bypass_risk=bool(cfg.get("risk", {}).get("bypass_in_backtest", False)),
     )
 
     log.info(

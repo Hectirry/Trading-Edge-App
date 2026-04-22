@@ -70,6 +70,10 @@ class EntryWindowConfig:
 class FillConfig:
     slippage_bps: float = 10.0
     fill_probability: float = 0.95
+    # polybot-btc5m backtest omits the parabolic fee; polybot-agent applies
+    # it. Strategies toggle per their source convention.
+    apply_fee_in_backtest: bool = False
+    fee_k: float = 0.05
 
 
 @dataclass
@@ -123,6 +127,7 @@ def run_backtest(
     config_used: dict,
     indicator_cfg: IndicatorConfig | None = None,
     seed: int = 42,
+    bypass_risk: bool = False,
 ) -> BacktestRunResult:
     strategy.on_start()
     rng = random.Random(seed)
@@ -170,10 +175,16 @@ def run_backtest(
             # polybot core/backtest.py._IndicatorStack.update. Overwrites
             # ctx.edge, ctx.model_prob_yes, ctx.z_score, etc.
             indicators.update(ctx)
-            ctx.recent_ticks = recent_ctxs[-30:]
+            # Pass ALL prior ticks from this market, not a bounded slice.
+            # polybot-agent backtest_engine.replay_window does the same
+            # (snapshots[:i]). trend_confirm_t1_v1's AFML features need
+            # up to cusum_lookback=120 spot prices; a 30-tick slice would
+            # zero them out and change the decision vector. Strategies that
+            # only want a recent slice already apply `[-30:]` inline
+            # (e.g., imbalance_v3 depth_trend check), so passing the full
+            # list is backward-compatible.
+            ctx.recent_ticks = list(recent_ctxs)
             recent_ctxs.append(ctx)
-            if len(recent_ctxs) > 60:
-                recent_ctxs.pop(0)
 
             if position is not None:
                 # Single-position-per-market; skip evaluation once entered.
@@ -183,11 +194,16 @@ def run_backtest(
             ):
                 continue
 
-            # Risk gate first — mirrors polybot precedence.
-            allowed, reason = risk_manager.can_enter(ctx)
-            if not allowed:
-                decision_counts["RISK_SKIP"] = decision_counts.get("RISK_SKIP", 0) + 1
-                continue
+            # Risk gate first — mirrors polybot precedence. `bypass_risk`
+            # is set for strategies whose live counterpart runs its own
+            # risk/gate logic and whose backtest engine skips the manager
+            # entirely (see trend_confirm_t1_v1 TOML:
+            # `[risk].bypass_in_backtest=true`).
+            if not bypass_risk:
+                allowed, reason = risk_manager.can_enter(ctx)
+                if not allowed:
+                    decision_counts["RISK_SKIP"] = decision_counts.get("RISK_SKIP", 0) + 1
+                    continue
 
             decision: Decision = strategy.should_enter(ctx)
             decision_counts[decision.action.value] = (
@@ -230,7 +246,12 @@ def run_backtest(
 
         if position is not None:
             won = _won_market(open_price_market, final_price, position["side"])
-            pnl = _resolve_pnl(position["entry_price"], stake_usd, won)
+            gross_pnl = _resolve_pnl(position["entry_price"], stake_usd, won)
+            fee_charged = 0.0
+            if fill_cfg.apply_fee_in_backtest and position["entry_price"] > 0:
+                p = position["entry_price"]
+                fee_charged = fill_cfg.fee_k * p * (1.0 - p) * stake_usd
+            pnl = gross_pnl - fee_charged
             resolution = "win" if won else "loss"
             trades.append(
                 BacktestTrade(
@@ -245,7 +266,7 @@ def run_backtest(
                     resolution=resolution,
                     pnl_usd=pnl,
                     slippage=position["slippage"],
-                    fee=0.0,
+                    fee=fee_charged,
                     entry_t_in_window=position["t_in_window"],
                     signal_first_seen_t_in_window=signal_first_seen or position["t_in_window"],
                     implied_prob_yes_at_entry=position["implied_prob_yes"],
@@ -256,7 +277,8 @@ def run_backtest(
                 )
             )
             trade_idx += 1
-            risk_manager.on_trade_closed(pnl, now=close_ts_market)
+            if not bypass_risk:
+                risk_manager.on_trade_closed(pnl, now=close_ts_market)
             # NOTE on parity: polybot's backtest does NOT call
             # strategy.on_trade_resolved (see core/backtest.py). This means the
             # imbalance_v3 streak pause never fires in polybot backtests, even

@@ -91,6 +91,7 @@ def run_walk_forward(
             config_used=config_used,
             indicator_cfg=indicator_cfg,
             seed=seed,
+            bypass_risk=bool(risk_cfg.get("bypass_in_backtest", False)),
         )
         kpis = compute_kpis(result.trades, (test_to - test_from).total_seconds())
         splits.append(
