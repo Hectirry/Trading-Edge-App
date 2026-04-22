@@ -24,6 +24,7 @@ from trading.engine.backtest_driver import EntryWindowConfig, FillConfig, run_ba
 from trading.engine.data_loader import PolybotSQLiteLoader
 from trading.engine.node import create_trading_node
 from trading.engine.risk import RiskManager
+from trading.paper.backtest_loader import PaperTicksLoader
 from trading.research.report import persist_and_render
 
 log = get_logger("cli.backtest")
@@ -54,8 +55,10 @@ async def _run(args: argparse.Namespace) -> None:
 
     if args.source == "polybot_sqlite":
         loader = PolybotSQLiteLoader(db_path=args.polybot_db)
+    elif args.source == "paper_ticks":
+        loader = PaperTicksLoader(dsn=get_settings().pg_dsn)
     else:
-        raise SystemExit(f"source not supported yet: {args.source}")
+        raise SystemExit(f"source not supported: {args.source}")
 
     sizing = cfg.get("sizing", {})
     bt = cfg.get("backtest", {})
@@ -118,7 +121,13 @@ def main() -> None:
     p.add_argument("--params", required=True)
     p.add_argument("--from", dest="from_ts", required=True, type=_parse_ts)
     p.add_argument("--to", dest="to_ts", required=True, type=_parse_ts)
-    p.add_argument("--source", default="polybot_sqlite", choices=["polybot_sqlite"])
+    p.add_argument(
+        "--source",
+        default="polybot_sqlite",
+        choices=["polybot_sqlite", "paper_ticks"],
+        help="polybot_sqlite: read from /home/coder/polybot-btc5m (parity). "
+        "paper_ticks: read from market_data.paper_ticks (Phase 3 output).",
+    )
     p.add_argument("--polybot-db", default="/polybot-btc5m-data/polybot.db")
     p.add_argument("--no-persist", action="store_true", help="skip DB + HTML (smoke test)")
     p.add_argument("--seed", type=int, default=42, help="deterministic fill-sim RNG seed")

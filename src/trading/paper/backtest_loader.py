@@ -1,17 +1,19 @@
 """Postgres-backed DataLoader for `market_data.paper_ticks`.
 
 Same `iter_markets` signature as PolybotSQLiteLoader so run_backtest
-consumes it transparently. Uses asyncpg but exposes a sync iterator to
-keep the driver call site simple — it opens a sync psycopg-style
-connection via asyncpg under the hood? No — we use a sync path via
-`psycopg2` would be heavy. Simpler: open an async connection in a
-sync generator with asyncio.run for the whole fetch. For this Phase 3
-use case (weekly cron), latency is fine.
+consumes it transparently.
+
+Implementation note: `run_backtest` is sync but is usually driven by an
+outer `asyncio.run(_run(...))` in the CLI. Nested `asyncio.run` is
+forbidden, so this loader uses `asyncio.get_event_loop().run_until_complete`
+with a fresh loop per call when there is no running loop, and falls back
+to running the coroutine via a dedicated thread when there is.
 """
 
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Iterator
 
 import asyncpg
@@ -20,6 +22,33 @@ from trading.common.logging import get_logger
 from trading.engine.types import TickContext
 
 log = get_logger(__name__)
+
+
+def _run_coro(coro):
+    """Execute an async coroutine from a sync context, even when an outer
+    event loop is already running (the CLI wraps main in `asyncio.run`)."""
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is None:
+        return asyncio.run(coro)
+    # Running loop present → run the coroutine on a fresh loop in a thread.
+    result: dict = {}
+
+    def _worker():
+        new_loop = asyncio.new_event_loop()
+        try:
+            result["value"] = new_loop.run_until_complete(coro)
+        finally:
+            new_loop.close()
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join()
+    if "value" not in result:
+        raise RuntimeError("PaperTicksLoader helper thread did not complete")
+    return result["value"]
 
 
 class PaperTicksLoader:
@@ -97,6 +126,6 @@ class PaperTicksLoader:
                 )
             return out
 
-        slugs = asyncio.run(fetch_slugs())
+        slugs = _run_coro(fetch_slugs())
         for slug in slugs:
-            yield slug, asyncio.run(fetch_ticks(slug))
+            yield slug, _run_coro(fetch_ticks(slug))
