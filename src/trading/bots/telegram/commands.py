@@ -181,7 +181,7 @@ class CommandPoller:
             "/status              engine + kill switch\n"
             "/positions           open paper positions\n"
             "/trades [N]          last N paper trades (default 10)\n"
-            "/pnl [hours]         pnl over last H hours (default 24)\n"
+            "/pnl [today|semana|mes]   pnl for the period (default today)\n"
             "/pause <strategy>    pause a strategy\n"
             "/resume <strategy>   resume a strategy\n"
             "/killswitch          arm KILL_SWITCH (two-step)\n"
@@ -196,13 +196,27 @@ class CommandPoller:
             await self._reply(chat_id, f"api error {code}: {body}")
             return
         ks = "ON" if body.get("kill_switch_active") else "OFF"
-        hb = body.get("heartbeat") or {}
+        age = body.get("heartbeat_age_s")
+        age_str = "-" if age is None else f"{age:.1f}s"
+        pnl_today = body.get("pnl_today") or {}
+        pnl_value = pnl_today.get("pnl") if isinstance(pnl_today, dict) else None
+        trades_today = pnl_today.get("n_trades") if isinstance(pnl_today, dict) else None
+        strategies = body.get("strategies") or []
+        n_paused = sum(1 for s in strategies if s.get("paused"))
+
+        # Open-position count isn't included in /status; fetch separately.
+        n_open = "-"
+        pcode, pbody = await self._api_get("/api/v1/positions")
+        if pcode == 200:
+            n_open = len(pbody.get("positions") or [])
+
         lines = [
-            f"engine heartbeat: age={hb.get('age_s', '-')}s",
+            f"engine: {'up' if body.get('engine_up') else 'DOWN'}  heartbeat age={age_str}",
             f"kill switch: {ks}",
-            f"open positions: {body.get('open_positions', '-')}",
-            f"trades today: {body.get('trades_today', '-')}",
-            f"pnl today: {_fmt_money(body.get('pnl_today'))}",
+            f"strategies: {len(strategies)} ({n_paused} paused)",
+            f"open positions: {n_open}",
+            f"trades today: {trades_today if trades_today is not None else '-'}",
+            f"pnl today: {_fmt_money(pnl_value)}",
         ]
         await self._reply(chat_id, "\n".join(lines))
 
@@ -249,19 +263,21 @@ class CommandPoller:
         await self._reply(chat_id, "\n".join(lines))
 
     async def _cmd_pnl(self, chat_id: int, user_id: int, args: str) -> None:
-        hours = 24
+        period = "today"
         if args:
-            try:
-                hours = min(24 * 30, max(1, int(args.split()[0])))
-            except ValueError:
-                pass
-        code, body = await self._api_get("/api/v1/pnl", params={"hours": hours})
+            candidate = args.split()[0].lower()
+            if candidate in ("today", "semana", "mes"):
+                period = candidate
+            else:
+                await self._reply(chat_id, "usage: /pnl [today|semana|mes]")
+                return
+        code, body = await self._api_get("/api/v1/pnl", params={"period": period})
         if code != 200:
             await self._reply(chat_id, f"api error {code}: {body}")
             return
         await self._reply(
             chat_id,
-            f"pnl last {hours}h: {_fmt_money(body.get('pnl'))}  "
+            f"pnl ({period}): {_fmt_money(body.get('pnl'))}  "
             f"(n={body.get('n_trades')})",
         )
 
