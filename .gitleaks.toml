@@ -1,0 +1,15 @@
+title = "Trading-Edge-App gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Expected placeholders in example/doc files"
+paths = [
+    '''\.env\.example$''',
+    '''Docs/.*\.md$''',
+]
+regexes = [
+    '''CHANGE_ME''',
+    '''EXAMPLE_[A-Z_]+''',
+]

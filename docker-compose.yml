@@ -1,0 +1,162 @@
+# Trading-Edge-App — 7 service stack (Caddy omitted; Grafana served via existing Traefik).
+# Tags pinned per reproducibility invariant.
+# Secrets loaded from /etc/trading-system/secrets.env (chmod 600, owned root).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-python-stub: &python-stub
+  image: python:3.11.11-slim
+  restart: unless-stopped
+  logging: *default-logging
+  command: ["python", "-c", "import time,sys,json; print(json.dumps({'event':'stub_up','service':__import__('os').environ.get('TEA_SERVICE','?')})); sys.stdout.flush()\nwhile True:\n    time.sleep(30)"]
+
+services:
+
+  tea-postgres:
+    build: ./infra/postgres
+    image: tea-postgres:0.1.0
+    container_name: tea-postgres
+    restart: unless-stopped
+    env_file:
+      - path: /etc/trading-system/secrets.env
+        required: false
+    environment:
+      POSTGRES_DB: ${TEA_PG_DB}
+      POSTGRES_USER: ${TEA_PG_USER}
+      POSTGRES_PASSWORD: ${TEA_PG_PASSWORD}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - tea_pgdata:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "max_connections=50"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TEA_PG_USER} -d ${TEA_PG_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+    networks: [tea_internal]
+
+  tea-redis:
+    image: redis:7.4.1-alpine
+    container_name: tea-redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+    networks: [tea_internal]
+
+  tea-ingestor:
+    <<: *python-stub
+    container_name: tea-ingestor
+    environment:
+      TEA_SERVICE: ingestor
+    env_file:
+      - path: /etc/trading-system/secrets.env
+        required: false
+    depends_on:
+      tea-postgres:
+        condition: service_healthy
+      tea-redis:
+        condition: service_healthy
+    networks: [tea_internal]
+
+  tea-engine:
+    <<: *python-stub
+    container_name: tea-engine
+    environment:
+      TEA_SERVICE: trading-engine
+    env_file:
+      - path: /etc/trading-system/secrets.env
+        required: false
+    depends_on:
+      tea-postgres:
+        condition: service_healthy
+      tea-redis:
+        condition: service_healthy
+    # Kill switch convention (phases 2+): engine reads this file each tick.
+    volumes:
+      - /etc/trading-system:/etc/trading-system:ro
+    networks: [tea_internal]
+
+  tea-api:
+    <<: *python-stub
+    container_name: tea-api
+    environment:
+      TEA_SERVICE: api
+    env_file:
+      - path: /etc/trading-system/secrets.env
+        required: false
+    depends_on:
+      tea-postgres:
+        condition: service_healthy
+      tea-redis:
+        condition: service_healthy
+    networks: [tea_internal]
+
+  tea-telegram-bot:
+    <<: *python-stub
+    container_name: tea-telegram-bot
+    environment:
+      TEA_SERVICE: telegram-bot
+    env_file:
+      - path: /etc/trading-system/secrets.env
+        required: false
+    depends_on:
+      tea-redis:
+        condition: service_healthy
+    networks: [tea_internal]
+
+  tea-grafana:
+    image: grafana/grafana:11.4.0
+    container_name: tea-grafana
+    restart: unless-stopped
+    env_file:
+      - path: /etc/trading-system/secrets.env
+        required: false
+    environment:
+      GF_SECURITY_ADMIN_USER: ${TEA_GF_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${TEA_GF_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: ${TEA_GF_ROOT_URL}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - tea_grafana:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      tea-postgres:
+        condition: service_healthy
+    logging: *default-logging
+    networks: [tea_internal, tea_edge]
+
+networks:
+  tea_internal:
+    name: tea_internal
+    driver: bridge
+    internal: false
+  tea_edge:
+    name: tea_edge
+    driver: bridge
+
+volumes:
+  tea_pgdata:
+    name: tea_pgdata
+  tea_grafana:
+    name: tea_grafana

@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  - name: TEA-Postgres
+    type: postgres
+    access: proxy
+    url: tea-postgres:5432
+    database: ${TEA_PG_DB}
+    user: ${TEA_PG_USER}
+    secureJsonData:
+      password: ${TEA_PG_PASSWORD}
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: true
+    isDefault: true
+    editable: false

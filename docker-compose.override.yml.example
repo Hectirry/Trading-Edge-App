@@ -1,0 +1,7 @@
+# Copy to docker-compose.override.yml for local dev overrides (NOT committed).
+# Example: expose Grafana port locally without Traefik.
+
+services:
+  tea-grafana:
+    ports:
+      - "127.0.0.1:3000:3000"
