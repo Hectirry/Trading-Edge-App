@@ -1,0 +1,55 @@
+{
+  "id": null,
+  "uid": "tea-backtests",
+  "title": "TEA — Backtests",
+  "tags": ["tea", "phase2", "research"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Recent backtests",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT b.started_at, b.strategy_name, b.params_hash, b.dataset_from, b.dataset_to, (b.metrics->'performance'->>'n_trades')::int AS n_trades, round(((b.metrics->'performance'->>'win_rate')::numeric) * 100, 1) AS win_rate_pct, round((b.metrics->'performance'->>'total_pnl')::numeric, 2) AS total_pnl, round((b.metrics->'risk_adjusted'->>'sharpe_per_trade')::numeric, 2) AS sharpe_trade, round((b.metrics->'risk_adjusted'->>'sharpe_daily')::numeric, 2) AS sharpe_daily, round((b.metrics->'risk_adjusted'->>'mdd_usd')::numeric, 2) AS mdd_usd, b.strategy_commit, b.data_source, b.report_path FROM research.backtests b ORDER BY b.started_at DESC LIMIT 25;"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Equity curve — latest backtest",
+      "gridPos": { "x": 0, "y": 10, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "WITH latest AS (SELECT id FROM research.backtests ORDER BY started_at DESC LIMIT 1) SELECT t.exit_ts AS time, SUM(t.pnl) OVER (ORDER BY t.exit_ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS equity FROM research.backtest_trades t JOIN latest ON t.backtest_id = latest.id ORDER BY t.exit_ts;"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Walk-forward runs",
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 6 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT started_at, strategy_name, params_hash, verdict, (summary->>'n_splits')::int AS n_splits, round((summary->>'pnl_mean')::numeric, 2) AS pnl_mean, round((summary->>'win_rate_mean')::numeric * 100, 1) AS win_rate_mean_pct, (summary->>'tolerance')::numeric AS tolerance FROM research.walk_forward_runs ORDER BY started_at DESC LIMIT 25;"
+        }
+      ]
+    }
+  ]
+}

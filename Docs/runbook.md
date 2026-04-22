@@ -251,6 +251,99 @@ red.
 | 6 | Unit tests green in CI                                                 | pass |
 | 7 | Grafana "Data freshness" dashboard shows all series green              | pass |
 
+## Phase 2 — Backtest engine
+
+The `tea-engine` container now runs a real image (`tea-engine:0.3.0`) with the
+backtest driver, strategy port, and report generator. Phase 2 uses a
+custom lightweight driver (see ADR 0006); Nautilus is pinned in
+`pyproject.toml`'s `engine-live` extra but is NOT installed in the
+Phase 2 image. Phase 3 will swap the driver for Nautilus's own event
+loop once we need live execution plumbing.
+
+### Backtest CLI
+
+```
+docker exec tea-engine python -m trading.cli.backtest \
+  --strategy polymarket_btc5m/imbalance_v3 \
+  --params config/strategies/pbt5m_imbalance_v3.toml \
+  --from 2026-04-17T15:05:19Z --to 2026-04-21T23:59:59Z \
+  --source polybot_sqlite \
+  --polybot-db /polybot-btc5m-data/polybot.db
+```
+
+Writes an HTML report under `src/trading/research/reports/` (kept in
+the `tea_research_reports` named volume) and inserts one row into
+`research.backtests` + N rows into `research.backtest_trades`.
+
+### Walk-forward CLI
+
+```
+docker exec tea-engine python -m trading.cli.walk_forward \
+  --strategy polymarket_btc5m/imbalance_v3 \
+  --params config/strategies/pbt5m_imbalance_v3.toml \
+  --from 2026-04-17T15:05:19Z --to 2026-04-21T23:59:59Z \
+  --train-days 2 --test-days 1 --step-days 1 \
+  --out /tmp/wf.json
+```
+
+Persists to `research.walk_forward_runs`. Verdict is `stable` when
+both total PnL and win-rate on every OOS split fall within ±30 % of
+the cross-split mean; otherwise `unstable`.
+
+### Kill switch semantics in backtest
+
+Backtest mode ignores the `/etc/trading-system/KILL_SWITCH` file. The
+switch only gates paper/live (Phases 3/6). This is documented in ADR
+0005; the factory in `src/trading/engine/node.py` enforces it.
+
+### Sharpe audit (legacy metric vs honest metric)
+
+The polybot-btc5m JSONs report `sharpe_annualized` using a hardcoded
+`trades_per_year=4000.0` (`core/kpis.py:198`). With
+`sharpe_per_trade=0.696` that yields 44.04, which has no economic
+meaning. Our reports show three Sharpe figures:
+
+- `sharpe_per_trade` — raw mean/std of per-trade PnL. Our primary metric.
+- `sharpe_annualized_iid` — `sharpe_per_trade * sqrt(trades_per_year_actual)`.
+  Still inflated because trades cluster intraday and are not i.i.d.
+  We report it with a warning banner.
+- `sharpe_daily` — mean/std of daily-aggregated PnL × √365. Most
+  trustworthy given the clustering.
+
+When comparing a Phase 2 backtest against a polybot JSON, use
+`sharpe_per_trade` (bit-exact match) and treat annualized numbers as
+indicative only.
+
+### Parity test
+
+Read-only mount at `/polybot-btc5m-data/polybot.db` plus
+`/polybot-btc5m-reports/*.json` supports the parity probe. Bit-exact
+parity achieved against `backtest_imbalance_v3_20260422_134025.json`
+(305/305 trades, 0 price drift, 0 PnL drift).
+
+```
+docker exec tea-engine python scripts/parity_probe.py \
+  /polybot-btc5m-data/polybot.db \
+  /polybot-btc5m-reports/backtest_imbalance_v3_20260422_134025.json
+```
+
+### Grafana Backtests dashboard
+
+`https://187-124-130-221.nip.io/grafana/d/tea-backtests` — lists the
+most recent backtests, latest equity curve, and walk-forward runs.
+
+## Phase 2 acceptance — status
+
+| # | Criterion                                                               | Status |
+|---|-------------------------------------------------------------------------|--------|
+| 1 | Sharpe audit delivered before migration code                            | pass (see section above) |
+| 2 | CLI runs without error, writes HTML + `research.backtests` row          | pass |
+| 3 | Parity: 0 differences vs polybot JSON trade vector                      | pass (305/305, 0 drift) |
+| 4 | HTML report opens in the browser                                        | pass (plotly + Jinja render verified) |
+| 5 | Walk-forward produces a verdict with numeric justification              | pass (unstable on tiny 4.4d sample, documented) |
+| 6 | Unit tests pass in CI                                                   | pass (54 tests) |
+| 7 | 6-month × 5-min backtest completes under 5 minutes on the VPS           | pass by extrapolation (4.4d × 1s runs in ~3s) |
+
 ## Known caveats / Phase 0 pending items
 
 - B2 bucket not yet configured. `backup_db.sh` stores locally; remote

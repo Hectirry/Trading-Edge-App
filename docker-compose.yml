@@ -82,8 +82,12 @@ services:
     networks: [tea_internal]
 
   tea-engine:
-    <<: *python-stub
+    build:
+      context: .
+      dockerfile: infra/engine/Dockerfile
+    image: tea-engine:0.3.0
     container_name: tea-engine
+    restart: unless-stopped
     environment:
       TEA_SERVICE: trading-engine
     env_file:
@@ -94,9 +98,20 @@ services:
         condition: service_healthy
       tea-redis:
         condition: service_healthy
-    # Kill switch convention (phases 2+): engine reads this file each tick.
     volumes:
+      # Kill switch + secrets (paper/live modes respect KILL_SWITCH;
+      # backtest ignores it, see ADR 0005).
       - /etc/trading-system:/etc/trading-system:ro
+      # Read-only mount of the polybot-btc5m SQLite for parity tests.
+      - /home/coder/polybot-btc5m/data:/polybot-btc5m-data:ro
+      # Read-only mount of polybot report JSONs for parity probe.
+      - /home/coder/polybot-btc5m/reports:/polybot-btc5m-reports:ro
+      # Make scripts/ available in the engine for parity probe.
+      - ./scripts:/app/scripts:ro
+      # Research reports live under the engine's working tree so they
+      # survive container restarts via named volume.
+      - tea_research_reports:/app/src/trading/research/reports
+    logging: *default-logging
     networks: [tea_internal]
 
   tea-api:
@@ -173,3 +188,5 @@ volumes:
     name: tea_pgdata
   tea_grafana:
     name: tea_grafana
+  tea_research_reports:
+    name: tea_research_reports
