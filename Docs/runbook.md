@@ -202,6 +202,55 @@ gitleaks detect --source . --verbose
 
 ---
 
+## Phase 1 — Ingest
+
+The `tea-ingestor` container runs the supervisor at
+`src/trading/cli/ingestor.py` with five concurrent streams:
+Binance OHLCV (5 intervals × 2 symbols), Binance trades (BTCUSDT),
+Bybit OHLCV (same shape), Bybit trades (BTCUSDT), and the Polymarket
+discovery + CLOB WebSocket loop. Metrics are exposed on
+`tea-ingestor:9000/metrics` over `tea_internal` only (never bound to
+the host).
+
+Historical backfill CLI (one-shot, idempotent):
+```
+docker exec tea-ingestor python -m trading.cli.backfill \
+  --broker binance --symbol BTCUSDT --interval 5m \
+  --from 2025-04-22T00:00:00Z --to 2026-04-22T00:00:00Z
+```
+
+Valid brokers: `binance | bybit | polymarket`. For Polymarket, omit
+`--symbol/--interval`; it uses `series_id=10684` and the slug prefix
+is fixed.
+
+Kill/restart of the ingestor is idempotent — PKs on every table reject
+duplicates via `ON CONFLICT DO NOTHING`:
+```
+docker compose kill tea-ingestor && docker compose up -d tea-ingestor
+```
+
+Data retention policies (enforced by TimescaleDB):
+- `market_data.crypto_trades`: 90 days
+- `market_data.polymarket_trades`: 180 days
+- OHLCV and `polymarket_prices`: no retention (cheap to keep)
+
+Freshness dashboard: `https://187-124-130-221.nip.io/grafana/d/tea-data-freshness`.
+Thresholds are relative (age divided by the candle period), so a 1d candle
+with a 20 h age still shows green, and a 1m candle stuck for 3 min goes
+red.
+
+## Phase 1 acceptance — status
+
+| # | Criterion                                                              | Status |
+|---|------------------------------------------------------------------------|--------|
+| 1 | Binance BTCUSDT 5m rows ≥ 100 000                                      | pass (105 125) |
+| 2 | Polymarket `btc-updown-5m-%` markets ≥ 8 000                           | pass (8 999) |
+| 3 | Live stream gap < interval period (or < 60 s for trades)               | pass |
+| 4 | Kill + restart `tea-ingestor` → no duplicate `trade_id`                | pass (0 dupes) |
+| 5 | `backfill` run twice on the same range → row count unchanged           | pass |
+| 6 | Unit tests green in CI                                                 | pass |
+| 7 | Grafana "Data freshness" dashboard shows all series green              | pass |
+
 ## Known caveats / Phase 0 pending items
 
 - B2 bucket not yet configured. `backup_db.sh` stores locally; remote
