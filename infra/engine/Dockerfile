@@ -29,7 +29,8 @@ RUN pip install --no-cache-dir \
     pandas==2.2.3 \
     jinja2==3.1.5 \
     plotly==5.24.1 \
-    tomli==2.2.1
+    tomli==2.2.1 \
+    redis==5.2.1
 
 COPY src ./src
 COPY config ./config
@@ -38,4 +39,4 @@ ENV PYTHONPATH=/app/src
 # Read-only mount of polybot-btc5m SQLite is attached from docker-compose
 # for parity tests (see docker-compose.yml:tea-engine.volumes).
 
-CMD ["python", "-c", "import time; print('tea-engine ready (backtest CLI only in phase 2)'); time.sleep(86400)"]
+CMD ["python", "-m", "trading.cli.paper_engine"]

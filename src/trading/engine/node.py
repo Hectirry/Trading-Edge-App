@@ -35,6 +35,23 @@ class BacktestNode:
         pass
 
 
+class PaperNode:
+    """Paper mode handle. Real engine lives in trading.cli.paper_engine;
+    this class is the factory contract (Invariant I.1 — same interface
+    across modes)."""
+
+    mode = "paper"
+
+    def __init__(self, strategy_name: str) -> None:
+        self.strategy_name = strategy_name
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+
 KILL_SWITCH_PATH = "/etc/trading-system/KILL_SWITCH"
 
 
@@ -64,9 +81,7 @@ def create_trading_node(
         )
 
     if mode == "paper":
-        raise NotImplementedError(
-            "paper mode wiring ships in Phase 3. Use --mode=backtest for Phase 2."
-        )
+        return PaperNode(strategy_name)
 
     if mode == "live":
         if not check_live_file():

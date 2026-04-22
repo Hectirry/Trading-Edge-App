@@ -130,8 +130,12 @@ services:
     networks: [tea_internal]
 
   tea-telegram-bot:
-    <<: *python-stub
+    build:
+      context: .
+      dockerfile: infra/telegram_bot/Dockerfile
+    image: tea-telegram-bot:0.3.0
     container_name: tea-telegram-bot
+    restart: unless-stopped
     environment:
       TEA_SERVICE: telegram-bot
     env_file:

@@ -1,0 +1,99 @@
+{
+  "id": null,
+  "uid": "tea-paper-live",
+  "title": "TEA — Paper trading live",
+  "tags": ["tea", "phase3", "paper"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Today's PnL (USD)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COALESCE(SUM((metadata::jsonb->>'pnl')::numeric), 0) AS value FROM trading.fills WHERE mode='paper' AND metadata::jsonb->>'kind'='settle' AND ts::date = (now() AT TIME ZONE 'UTC')::date;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": -1 }, { "color": "green", "value": 0.01 } ] } } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Trades today",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS value FROM trading.fills WHERE mode='paper' AND metadata::jsonb->>'kind'='entry' AND ts::date = (now() AT TIME ZONE 'UTC')::date;"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Open positions",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT (COUNT(*) FILTER (WHERE metadata::jsonb->>'kind'='entry') - COUNT(*) FILTER (WHERE metadata::jsonb->>'kind'='settle'))::int AS value FROM trading.fills WHERE mode='paper' AND ts > now() - interval '1 day';"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Heartbeat age (s)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - MAX(ts)))::int AS value FROM market_data.paper_ticks WHERE ts > now() - interval '5 minutes';"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 30 }, { "color": "red", "value": 60 } ] } } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Cumulative PnL (last 24h)",
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT ts AS time, SUM((metadata::jsonb->>'pnl')::numeric) OVER (ORDER BY ts) AS equity FROM trading.fills WHERE mode='paper' AND metadata::jsonb->>'kind'='settle' AND ts > now() - interval '24 hours' ORDER BY ts;"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Last 20 trades (paper)",
+      "gridPos": { "x": 0, "y": 13, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT o.ts_submit AS entry_ts, o.instrument_id, o.price AS entry_price, f_settle.price AS exit_price, (f_settle.metadata::jsonb->>'resolution') AS resolution, round(((f_settle.metadata::jsonb->>'pnl')::numeric), 2) AS pnl FROM trading.orders o LEFT JOIN trading.fills f_settle ON f_settle.order_id=o.order_id AND f_settle.metadata::jsonb->>'kind'='settle' WHERE o.mode='paper' ORDER BY o.ts_submit DESC LIMIT 20;"
+        }
+      ]
+    }
+  ]
+}

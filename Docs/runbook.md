@@ -344,6 +344,130 @@ most recent backtests, latest equity curve, and walk-forward runs.
 | 6 | Unit tests pass in CI                                                   | pass (54 tests) |
 | 7 | 6-month × 5-min backtest completes under 5 minutes on the VPS           | pass by extrapolation (4.4d × 1s runs in ~3s) |
 
+## Phase 3 — Paper trading 24/7
+
+The `tea-engine` image (`tea-engine:0.3.0`) now runs the paper engine by
+default (`python -m trading.cli.paper_engine`). It subscribes to three
+live feeds, composes ticks, persists them to `market_data.paper_ticks`,
+and calls the same `imbalance_v3` strategy code that the backtest uses.
+
+### Deploy
+
+```
+make deploy-staging   # git pull + rebuild + restart + health check
+make rollback-staging # revert last commit and redeploy
+make check-staging    # run health probe only
+make logs-engine
+make logs-telegram
+```
+
+The health check asserts that every service is Up and that the Redis
+heartbeat is < 30 s old. A failing check inside `deploy-staging` triggers
+an automatic `rollback-staging`.
+
+### Live feeds
+
+- `wss://stream.binance.com:9443/ws/btcusdt@kline_1s` — master clock at 1 Hz.
+- `wss://ws-live-data.polymarket.com` — Chainlink BTC/USD oracle (settles windows).
+- `wss://ws-subscriptions-clob.polymarket.com/ws/market` — CLOB book per token.
+
+All three reconnect with exponential backoff (1 → 60 s) on failure.
+The CLOB frame limit is lifted to 16 MiB because subscribing to ~200
+tokens (100 open markets × YES/NO) sends a large initial payload.
+
+### paper_ticks
+
+Every 1 s the tick recorder composes one row per open market and writes
+to `market_data.paper_ticks`. Retention is 30 days (Timescale policy).
+Each row also publishes on Redis channel `tea:paper_ticks` for the
+paper driver to consume synchronously.
+
+### Paper driver + SimulatedExecutionClient
+
+The driver receives ticks from Redis, maintains one `IndicatorStack`
+per market, and calls the same `imbalance_v3` code path that the
+Phase 2 backtest uses. Orders go through
+`trading.paper.exec_client.SimulatedExecutionClient` which:
+
+- Checks `KILL_SWITCH` on every submit (alert-only per ADR 0005).
+- Rejects on stale book (> 10 s without a CLOB update).
+- Rejects on late entry (`t_in_window > latest - 5 s`).
+- Uses the parabolic fee model from `engine/fill_model.py`.
+- Persists orders + fills to `trading.orders` / `trading.fills` with
+  `mode='paper'`, `client_order_id` deterministic from
+  `sha256(strategy|slug|ts|side)[:16]`, so restarts do not duplicate.
+
+### Heartbeat + alerts
+
+The engine publishes a JSON heartbeat to Redis key
+`tea:engine:last_heartbeat` every 10 s (TTL 120 s). The watcher in
+`tea-telegram-bot` polls every 30 s and fires Telegram alerts on
+`HEARTBEAT_LOST` / `HEARTBEAT_RECOVERED` transitions.
+
+Alert severities: INFO (trade events, heartbeat recovered), WARN (loss
+threshold, kill-switch removed), CRIT (engine stopped, heartbeat lost,
+reconciliation fail, kill-switch active). Each kind has a 60 s dedupe
+window. A circuit breaker suppresses alerts for 15 min after 20 sends
+in 60 s.
+
+### Reconciliation — alert only
+
+Every 5 min the driver compares its in-memory ledger against
+`trading.fills`. Divergence fires a CRIT alert and logs detail; it does
+NOT auto-pause. Manual halt options: `sudo touch
+/etc/trading-system/KILL_SWITCH` (blocks new orders) or docker-restart
+the engine.
+
+### Daily report
+
+Cron inside `tea-telegram-bot`: fires at 00:05 UTC every day.
+`python -m trading.cli.daily_report` aggregates yesterday's fills and
+posts to Telegram. Force a report for a specific day:
+
+```
+docker exec tea-telegram-bot python -m trading.cli.daily_report \
+  --date 2026-04-22 --print-only
+```
+
+### Weekly paper-vs-backtest
+
+Cron inside `tea-telegram-bot`: fires Sundays at 01:00 UTC.
+Replays the backtest driver against `market_data.paper_ticks` for the
+previous 7 days, compares against `trading.orders`/`trading.fills`
+with `mode='paper'`, persists to `research.paper_vs_backtest_comparisons`
+and posts a Telegram summary.
+
+Verdict thresholds: `divergent` when `|Δtrades| > 10 %` or
+`|Δpnl| > 20 %`; else `aligned`.
+
+### Kill switch operational notes
+
+Phase 3 enforces the kill switch only on paper and live:
+
+```
+# Activate — engine stops accepting new orders; open positions still settle.
+sudo touch /etc/trading-system/KILL_SWITCH
+
+# Deactivate
+sudo rm /etc/trading-system/KILL_SWITCH
+```
+
+An edge-triggered Telegram alert (`KILL_SWITCH_ON` / `KILL_SWITCH_OFF`)
+fires on each transition. Backtest mode ignores the file (ADR 0005).
+
+### Phase 3 acceptance checklist
+
+Track against the Phase 3 criteria once 7 days of paper uptime pass:
+
+- [ ] `tea-engine` up 7 days with no manual restart.
+- [ ] ≥ 50 paper trades in the same window.
+- [ ] Weekly paper-vs-backtest divergence < 10 % trades / < 20 % PnL.
+- [ ] Telegram alerts verified by killing `tea-engine` and confirming
+      `HEARTBEAT_LOST` then `HEARTBEAT_RECOVERED` land in the channel.
+- [ ] Kill switch tested end-to-end (`sudo touch` → order reject alert
+      → `sudo rm` → recovery alert).
+- [ ] Runbook reviewed after the first weekly comparison.
+
 ## Known caveats / Phase 0 pending items
 
 - B2 bucket not yet configured. `backup_db.sh` stores locally; remote

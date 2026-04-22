@@ -1,0 +1,45 @@
+# Phase 3 staging environment.
+#
+# PROVISIONAL values documented inline with rationale. When reviewing
+# after a week of paper operation, either confirm or change-log here.
+
+[env]
+name = "staging"
+mode = "paper"
+
+# PROVISIONAL capital. Review after 2 weeks of live paper.
+capital_usd = 1000.0
+
+# PROVISIONAL: daily thresholds in percent of capital_usd.
+# alert = 3% (per Fase 3 plan), pause = 5% (doc Fase 3 provisional).
+daily_loss_alert_pct = 0.03
+daily_loss_pause_pct = 0.05
+
+# Heartbeat from engine to Redis. Watcher alerts when `heartbeat_timeout_s`
+# elapses without a fresh tick on `tea:engine:last_heartbeat`.
+heartbeat_interval_s = 10
+heartbeat_timeout_s = 60
+
+# Reconciliation cadence. Alert-only on divergence; no auto-pause (per
+# Phase 3 plan adjustment).
+reconciliation_interval_s = 300
+
+# paper_ticks retention is set via Timescale policy in 05_paper_ticks...sql
+# (30 days). Duplicated here as a reminder.
+paper_ticks_retention_days = 30
+
+[strategies.imbalance_v3]
+enabled = true
+params_file = "config/strategies/pbt5m_imbalance_v3.toml"
+
+[deployment]
+service = "tea-engine"
+# staging: no confirmation file required.
+# production.toml would set ["I_UNDERSTAND_THIS_IS_REAL_MONEY"].
+required_ack_files = []
+
+[alerts]
+telegram_enabled = true
+# bot_token + chat_id come from /etc/trading-system/secrets.env:
+#   TEA_TELEGRAM_BOT_TOKEN
+#   TEA_TELEGRAM_CHAT_ID
