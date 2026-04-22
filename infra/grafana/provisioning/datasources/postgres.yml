@@ -2,6 +2,7 @@ apiVersion: 1
 
 datasources:
   - name: TEA-Postgres
+    uid: tea-postgres
     type: postgres
     access: proxy
     url: tea-postgres:5432

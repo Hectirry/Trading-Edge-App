@@ -145,6 +145,14 @@ services:
         condition: service_healthy
     logging: *default-logging
     networks: [tea_internal, tea_edge]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "tea_edge"
+      traefik.http.routers.tea-grafana.rule: "Host(`187-124-130-221.nip.io`) && PathPrefix(`/grafana`)"
+      traefik.http.routers.tea-grafana.entrypoints: "websecure"
+      traefik.http.routers.tea-grafana.tls: "true"
+      traefik.http.routers.tea-grafana.tls.certresolver: "letsencrypt"
+      traefik.http.services.tea-grafana.loadbalancer.server.port: "3000"
 
 networks:
   tea_internal:

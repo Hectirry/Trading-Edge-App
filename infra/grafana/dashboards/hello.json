@@ -14,7 +14,7 @@
       "type": "stat",
       "title": "Postgres now()",
       "gridPos": { "x": 0, "y": 0, "w": 12, "h": 6 },
-      "datasource": { "type": "postgres", "uid": "TEA-Postgres" },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
       "targets": [
         {
           "refId": "A",
@@ -34,7 +34,7 @@
       "type": "table",
       "title": "TimescaleDB version",
       "gridPos": { "x": 12, "y": 0, "w": 12, "h": 6 },
-      "datasource": { "type": "postgres", "uid": "TEA-Postgres" },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
       "targets": [
         {
           "refId": "A",
