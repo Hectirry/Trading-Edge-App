@@ -120,7 +120,7 @@ services:
     build:
       context: .
       dockerfile: infra/api/Dockerfile
-    image: tea-api:0.4.0
+    image: tea-api:0.5.0
     container_name: tea-api
     restart: unless-stopped
     environment:
@@ -152,7 +152,7 @@ services:
     build:
       context: .
       dockerfile: infra/telegram_bot/Dockerfile
-    image: tea-telegram-bot:0.3.0
+    image: tea-telegram-bot:0.4.0
     container_name: tea-telegram-bot
     restart: unless-stopped
     environment:

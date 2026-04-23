@@ -48,6 +48,18 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     telegram_authorized_users: str = ""  # CSV of user_ids
 
+    # LLM copilot (ADR 0010). Zero execution surface: these settings control
+    # only the read-only research endpoint.
+    openrouter_api_key: str = ""
+    llm_default_model: str = "qwen/qwen3-max"
+    llm_max_sessions_per_day: int = 50
+    llm_max_tokens_per_session: int = 200_000
+    llm_max_daily_cost_usd: float = 10.0
+    llm_request_timeout_s: float = 60.0
+    llm_include_source: bool = False  # never ship strategy source to the provider by default
+    llm_max_context_tokens: int = 50_000
+    llm_max_reply_tokens: int = 4096
+
     @property
     def pg_dsn(self) -> str:
         return f"postgresql://{self.pg_user}:{self.pg_password}@{self.pg_host}:{self.pg_port}/{self.pg_db}"

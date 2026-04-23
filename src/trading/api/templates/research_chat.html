@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}chat · TEA{% endblock %}
+{% block content %}
+<div x-data="chatApp()" class="grid grid-cols-12 gap-4">
+
+  <!-- Left: context picker -->
+  <aside class="col-span-3 space-y-4 border border-slate-800 rounded p-3">
+    <div>
+      <label class="block text-slate-400 text-xs mb-1">model</label>
+      <select x-model="model" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1">
+        {% for m in models %}
+          <option value="{{ m }}" {% if m == default_model %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <div class="text-slate-400 text-xs mb-1">backtests (last 20 completed)</div>
+      <div class="max-h-64 overflow-auto space-y-1 text-xs">
+        {% for b in backtests %}
+          <label class="flex items-start gap-2 py-0.5">
+            <input type="checkbox" @change="toggleRef('backtest', '{{ b.id }}')"
+                   class="mt-0.5" />
+            <span>
+              <span class="font-mono text-slate-300">{{ b.id[:8] }}</span>
+              <span class="text-slate-500">· {{ b.strategy_name }}</span>
+              {% if b.total_pnl is not none %}
+                <span class="{% if b.total_pnl < 0 %}text-red-400{% else %}text-emerald-400{% endif %}">
+                  ${{ '%.2f'|format(b.total_pnl) }}
+                </span>
+              {% endif %}
+            </span>
+          </label>
+        {% else %}
+          <div class="text-slate-500">no completed backtests</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div>
+      <div class="text-slate-400 text-xs mb-1">strategies</div>
+      <div class="space-y-1 text-xs">
+        {% for s in strategies %}
+          <label class="flex items-center gap-2">
+            <input type="checkbox" @change="toggleRef('strategy', '{{ s.name }}')" />
+            <span>{{ s.name }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      <p class="text-slate-600 text-xs mt-2 leading-snug">
+        Source code is NOT sent to the provider (ADR 0010,
+        <code>llm_include_source=false</code>). Only params TOML + metadata.
+      </p>
+    </div>
+
+    <div>
+      <div class="text-slate-400 text-xs mb-1">ADRs</div>
+      <div class="space-y-1 text-xs">
+        {% for n in ["0001","0005","0008","0009","0010"] %}
+          <label class="flex items-center gap-2">
+            <input type="checkbox" @change="toggleRef('adr', '{{ n }}')" />
+            <span>ADR {{ n }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <button @click="resetSession()"
+            class="w-full bg-slate-700 text-slate-200 rounded px-3 py-1 text-xs">
+      reset session
+    </button>
+  </aside>
+
+  <!-- Right: thread + input -->
+  <section class="col-span-9 border border-slate-800 rounded p-3 flex flex-col"
+           style="min-height: 70vh;">
+    <header class="flex items-center justify-between text-xs text-slate-400 pb-2 border-b border-slate-800">
+      <span>session <span class="font-mono">{{ session_id }}</span></span>
+      <span>
+        tokens <span x-text="tokensIn + tokensOut"></span>
+        · cost $<span x-text="cost.toFixed(4)"></span>
+      </span>
+    </header>
+
+    <div class="flex-1 overflow-auto my-3 space-y-3 text-sm" id="thread">
+      {% if conversation %}
+        {% for m in conversation.messages %}
+          <div class="{% if m.role == 'user' %}text-slate-200{% else %}text-slate-300{% endif %}">
+            <div class="text-slate-500 text-xs uppercase">{{ m.role }}</div>
+            <pre class="whitespace-pre-wrap font-mono">{{ m.content }}</pre>
+          </div>
+        {% endfor %}
+      {% endif %}
+      <template x-for="(m, i) in messages" :key="i">
+        <div :class="m.role === 'user' ? 'text-slate-200' : 'text-slate-300'">
+          <div class="text-slate-500 text-xs uppercase" x-text="m.role"></div>
+          <pre class="whitespace-pre-wrap font-mono" x-text="m.content"></pre>
+        </div>
+      </template>
+      <div x-show="pending" class="text-amber-400 text-xs">thinking…</div>
+      <div x-show="error" class="text-red-400 text-xs" x-text="error"></div>
+    </div>
+
+    <div class="border-t border-slate-800 pt-2">
+      <p class="text-slate-600 text-xs mb-1">
+        ⚠ AI output — verify before running any code or acting on advice.
+      </p>
+      <form @submit.prevent="send()" class="flex gap-2">
+        <textarea x-model="input" rows="2" placeholder="ask research copilot…"
+                  class="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 font-mono text-sm"></textarea>
+        <button type="submit" :disabled="pending"
+                class="bg-emerald-500 text-slate-900 font-semibold px-4 rounded disabled:opacity-40">
+          send
+        </button>
+      </form>
+    </div>
+  </section>
+</div>
+
+<script>
+function chatApp() {
+  return {
+    session_id: "{{ session_id }}",
+    model: "{{ default_model }}",
+    messages: [],
+    refs: [],
+    input: "",
+    pending: false,
+    error: "",
+    tokensIn: {{ conversation.tokens_in if conversation else 0 }},
+    tokensOut: {{ conversation.tokens_out if conversation else 0 }},
+    cost: {{ conversation.cost_usd if conversation else 0.0 }},
+
+    toggleRef(type, id) {
+      const key = `${type}:${id}`;
+      const i = this.refs.findIndex(r => `${r.type}:${r.id}` === key);
+      if (i >= 0) this.refs.splice(i, 1);
+      else this.refs.push({type, id});
+    },
+
+    async send() {
+      const msg = this.input.trim();
+      if (!msg || this.pending) return;
+      this.input = "";
+      this.error = "";
+      this.messages.push({role: "user", content: msg});
+      this.pending = true;
+      try {
+        const r = await fetch("/api/v1/llm/chat", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          credentials: "same-origin",
+          body: JSON.stringify({
+            session_id: this.session_id,
+            message: msg,
+            context_refs: this.refs,
+            model: this.model,
+          }),
+        });
+        if (!r.ok) {
+          const text = await r.text();
+          this.error = `error ${r.status}: ${text.slice(0, 200)}`;
+          return;
+        }
+        const data = await r.json();
+        this.messages.push({role: "assistant", content: data.assistant});
+        this.tokensIn = data.tokens_in_total;
+        this.tokensOut = data.tokens_out_total;
+        this.cost = data.cost_usd_total;
+      } catch (e) {
+        this.error = `network: ${e}`;
+      } finally {
+        this.pending = false;
+        this.$nextTick(() => {
+          const t = document.getElementById("thread");
+          if (t) t.scrollTop = t.scrollHeight;
+        });
+      }
+    },
+
+    async resetSession() {
+      await fetch("/api/v1/llm/reset?session_id=" + encodeURIComponent(this.session_id), {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      window.location = "/research/chat";
+    },
+  };
+}
+</script>
+{% endblock %}

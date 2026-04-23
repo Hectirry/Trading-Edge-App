@@ -61,3 +61,25 @@ class KillswitchResponse(BaseModel):
     active: bool
     path: str
     at: datetime
+
+
+class LLMContextRef(BaseModel):
+    type: Literal["backtest", "strategy", "recent_trades", "paper_stats", "adr"]
+    id: str
+
+
+class LLMChatRequest(BaseModel):
+    session_id: str
+    message: str
+    context_refs: list[LLMContextRef] = []
+    model: str | None = None
+
+
+class LLMChatResponse(BaseModel):
+    session_id: str
+    assistant: str
+    model: str
+    tokens_in_total: int
+    tokens_out_total: int
+    cost_usd_total: float
+    cost_usd_this_turn: float

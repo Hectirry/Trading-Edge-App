@@ -679,6 +679,81 @@ commands. All others get `⛔ not authorized` + a log line.
 | `/backtest ...`        | queues async job, DMs a report link on completion |
 | `/help`                | command reference |
 
+## Phase 5 — LLM research copilot (OpenRouter)
+
+See ADR 0010. Read-only research surface behind the Phase 4 auth.
+
+### Services affected
+
+- `tea-api` bumped to `tea-api:0.5.0` (`/api/v1/llm/chat`,
+  `/api/v1/llm/reset`, `/research/chat`).
+- `tea-telegram-bot` bumped to `tea-telegram-bot:0.4.0` (`/ask`,
+  `/ask_reset`).
+- `tea-postgres` gains two tables via `07_llm_conversations.sql`.
+- `tea-grafana` auto-loads a new dashboard `TEA — LLM usage`.
+
+### Secrets
+
+Put the OpenRouter key into `/etc/trading-system/secrets.env`:
+
+```
+OPENROUTER_API_KEY=sk-or-...
+```
+
+`chmod 600` already enforced. It is read by `tea-api` and
+`tea-telegram-bot` only. Never commit; ADR 0010 documents the
+redaction hook in structlog.
+
+### Apply
+
+```bash
+# Apply the new schema (idempotent) if the Postgres container has
+# already started from a previous init-scripts run:
+docker compose exec -T tea-postgres \
+  psql -U "$TEA_PG_USER" -d "$TEA_PG_DB" \
+  < infra/postgres/init/07_llm_conversations.sql
+
+# Rebuild API + bot with the new code:
+docker compose up -d --build tea-api tea-telegram-bot
+
+# Poke Grafana to reload provisioning (or restart):
+docker compose restart tea-grafana
+```
+
+### Defaults + caps
+
+- default model: `qwen/qwen3-max` (0.78 in / 3.90 out per M tok)
+- whitelist (all else rejected at the endpoint):
+  `qwen/qwen3-max`,
+  `anthropic/claude-sonnet-4.6`,
+  `anthropic/claude-opus-4.6`,
+  `openai/gpt-4o-mini`,
+  `meta-llama/llama-3.3-70b-instruct`
+- 50 sessions/user/day, 200 000 tok/session, $10/user/day cap
+- `llm_include_source=false` — strategy source files are NEVER
+  shipped to the provider by default; only TOML + metadata
+
+### Hard wall (ADR 0010)
+
+- `tools`, `tool_choice`, `function_call`, `functions` stripped from
+  every outbound body; the system prompt says the model has none.
+- Responses containing `tool_calls` / `function_call` raise
+  `LLMPolicyError` and are discarded before persistence.
+- All loaded context wraps in `<context type="…" id="…">…</context>`
+  with a prompt that flags it as DATA, never instructions.
+- User / session IDs scoped: `web:<sha256[:8](token)>` or
+  `telegram:<user_id>`.
+
+### /ask via Telegram
+
+```
+/ask <pregunta>      # creates or continues a session (Redis, 4h TTL)
+/ask_reset           # clears session in Redis + deletes DB row
+```
+
+The bot does not attach context refs. Use `/research/chat` in the
+dashboard if you want to pin backtests / ADRs to the prompt.
+
 ## Known caveats / Phase 0 pending items
 
 - B2 bucket not yet configured. `backup_db.sh` stores locally; remote

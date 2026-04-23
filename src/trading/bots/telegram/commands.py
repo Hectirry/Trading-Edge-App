@@ -9,10 +9,12 @@ the exact phrase ``sí lo entiendo`` as confirmation.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+import redis.asyncio as redis_async
 
 from trading.common.config import get_settings
 from trading.common.logging import get_logger
@@ -23,6 +25,8 @@ POLL_TIMEOUT_S = 25          # long-poll upper bound
 HTTP_TIMEOUT_S = 30.0        # httpx read timeout (> POLL_TIMEOUT_S)
 KILLSWITCH_CONFIRM = "sí lo entiendo"
 KILLSWITCH_FSM_TTL_S = 120   # pending confirmation expires after 2 min
+LLM_SESSION_TTL_S = 4 * 3600  # 4 hours of idle before /ask starts a new session
+TELEGRAM_MSG_MAX = 4000       # keep a safety margin under Telegram's 4096 limit
 
 
 def _fmt_pct(v: float | None) -> str:
@@ -31,6 +35,23 @@ def _fmt_pct(v: float | None) -> str:
 
 def _fmt_money(v: float | None) -> str:
     return "-" if v is None else f"${v:,.2f}"
+
+
+def _split_for_telegram(text: str, limit: int = TELEGRAM_MSG_MAX) -> list[str]:
+    """Split long LLM replies on line boundaries, falling back to hard cuts."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        cut = remaining.rfind("\n", 0, limit)
+        if cut < limit // 2:
+            cut = limit
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip("\n")
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 class CommandPoller:
@@ -47,6 +68,9 @@ class CommandPoller:
         self._http = httpx.AsyncClient(timeout=HTTP_TIMEOUT_S)
         # killswitch FSM: user_id -> (prompted_at UTC datetime)
         self._killswitch_pending: dict[int, datetime] = {}
+        # Redis client for LLM session memory (shared with engine/api).
+        redis_url = f"redis://{self.settings.redis_host}:{self.settings.redis_port}/0"
+        self._redis = redis_async.from_url(redis_url, decode_responses=True)
 
     @property
     def enabled(self) -> bool:
@@ -132,6 +156,8 @@ class CommandPoller:
             "/resume": self._cmd_resume,
             "/killswitch": self._cmd_killswitch,
             "/backtest": self._cmd_backtest,
+            "/ask": self._cmd_ask,
+            "/ask_reset": self._cmd_ask_reset,
             "/help": self._cmd_help,
             "/start": self._cmd_help,
         }
@@ -187,6 +213,8 @@ class CommandPoller:
             "/killswitch          arm KILL_SWITCH (two-step)\n"
             "/backtest <strategy> <params_file> <from_ts> <to_ts> "
             "[source] [polybot_db] [slug_encodes_open_ts]\n"
+            "/ask <pregunta>      research copilot (ADR 0010, read-only)\n"
+            "/ask_reset           clear current ask session\n"
             "/help                this message",
         )
 
@@ -395,3 +423,60 @@ class CommandPoller:
             chat_id,
             f"⏱ backtest {job_id} still running after 20 min — check /research",
         )
+
+    # ------------------------------------------------------------ /ask
+
+    async def _session_key(self, chat_id: int) -> str:
+        return f"tea:llm:session:{chat_id}"
+
+    async def _get_or_create_session(self, chat_id: int, user_id: int) -> tuple[str, bool]:
+        key = await self._session_key(chat_id)
+        existing = await self._redis.get(key)
+        if existing:
+            await self._redis.expire(key, LLM_SESSION_TTL_S)
+            return existing, False
+        sid = f"tg-{chat_id}-{uuid.uuid4().hex[:10]}"
+        await self._redis.set(key, sid, ex=LLM_SESSION_TTL_S)
+        return sid, True
+
+    async def _cmd_ask(self, chat_id: int, user_id: int, args: str) -> None:
+        if not args:
+            await self._reply(
+                chat_id,
+                "usage: /ask <pregunta>\nSin context_refs desde Telegram. "
+                "Usa /research/chat en el dashboard para adjuntar backtests/ADRs.",
+            )
+            return
+        sid, is_new = await self._get_or_create_session(chat_id, user_id)
+        body = {
+            "session_id": sid,
+            "message": args,
+            "context_refs": [],
+        }
+        await self._reply(chat_id, "🧠 thinking…")
+        code, resp = await self._api_post("/api/v1/llm/chat", json_body=body)
+        if code != 200:
+            detail = resp.get("detail") if isinstance(resp, dict) else str(resp)
+            await self._reply(chat_id, f"❌ /ask failed ({code}): {detail}")
+            return
+        reply = resp.get("assistant") or "(empty reply)"
+        for chunk in _split_for_telegram(reply):
+            await self._reply(chat_id, chunk)
+        footer = (
+            f"— session {sid[-10:]}  · ${resp.get('cost_usd_total', 0):.4f}"
+            f"  · model {resp.get('model', '?')}"
+        )
+        await self._reply(chat_id, footer)
+
+    async def _cmd_ask_reset(self, chat_id: int, user_id: int, args: str) -> None:
+        key = await self._session_key(chat_id)
+        prior = await self._redis.get(key)
+        await self._redis.delete(key)
+        if prior:
+            await self._api_post(
+                f"/api/v1/llm/reset?session_id={prior}",
+                json_body={},
+            )
+            await self._reply(chat_id, f"🧹 ask session cleared (was {prior[-10:]})")
+        else:
+            await self._reply(chat_id, "no active ask session")

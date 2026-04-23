@@ -26,12 +26,17 @@ from trading.api.models import (
     JobStatus,
     KillswitchRequest,
     KillswitchResponse,
+    LLMChatRequest,
+    LLMChatResponse,
     NewBacktestRequest,
     PauseResponse,
 )
 from trading.api.worker import run_job
 from trading.common.config import get_settings
 from trading.common.logging import configure_logging, get_logger
+from trading.llm.client import LLMError, LLMPolicyError
+from trading.llm.orchestrator import run_turn
+from trading.llm.rate_limit import RateLimitError
 
 configure_logging()
 log = get_logger("api")
@@ -240,6 +245,81 @@ async def api_killswitch_off():
     )
 
 
+# ------------------------------------------------------------------- LLM
+
+
+def _user_id_for_request(request: Request) -> str:
+    """Derive a stable user_id for the rate limit + conversation tables.
+
+    We reuse the cookie or header token, hashed, so multiple browsers
+    that share the same TEA_API_TOKEN map to the same namespace.
+    """
+    import hashlib
+
+    presented = request.headers.get("X-TEA-Token") or request.cookies.get("tea_token") or ""
+    if presented:
+        return "web:" + hashlib.sha256(presented.encode()).hexdigest()[:8]
+    return "web:anon"
+
+
+@app.post(
+    "/api/v1/llm/chat",
+    response_model=LLMChatResponse,
+    dependencies=[Depends(require_token)],
+)
+async def api_llm_chat(req: LLMChatRequest, request: Request) -> LLMChatResponse:
+    if not req.session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id required")
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="message required")
+
+    user_id = _user_id_for_request(request)
+    try:
+        turn = await run_turn(
+            session_id=req.session_id,
+            user_id=user_id,
+            message=req.message,
+            context_refs=[r.model_dump() for r in req.context_refs],
+            model=req.model,
+        )
+    except RateLimitError as e:
+        headers = {}
+        if e.retry_after_s is not None:
+            headers["Retry-After"] = str(e.retry_after_s)
+        raise HTTPException(status_code=e.status_code, detail=e.reason, headers=headers) from e
+    except LLMPolicyError as e:
+        log.error("api.llm.policy_violation", err=str(e))
+        raise HTTPException(status_code=502, detail="provider returned disallowed payload") from e
+    except LLMError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    conv = turn.conversation
+    return LLMChatResponse(
+        session_id=conv.session_id,
+        assistant=turn.assistant_content,
+        model=conv.model,
+        tokens_in_total=conv.tokens_in,
+        tokens_out_total=conv.tokens_out,
+        cost_usd_total=conv.cost_usd,
+        cost_usd_this_turn=turn.chat_result.cost_usd,
+    )
+
+
+@app.post("/api/v1/llm/reset", dependencies=[Depends(require_token)])
+async def api_llm_reset(session_id: str):
+    from trading.common.db import acquire as _acquire
+
+    async with _acquire() as conn:
+        await conn.execute(
+            "DELETE FROM research.llm_conversations WHERE session_id = $1",
+            session_id,
+        )
+    log.info("api.llm.reset", session_id=session_id)
+    return {"session_id": session_id, "deleted": True}
+
+
 # --------------------------------------------------------- HTML: dashboard
 
 
@@ -335,6 +415,34 @@ async def research_compare(request: Request, ids: str = ""):
         if row is not None:
             runs.append(_backtest_row_to_dict(row))
     return TEMPLATES.TemplateResponse(request, "research_compare.html", {"runs": runs})
+
+
+@app.get("/research/chat", response_class=HTMLResponse, include_in_schema=False)
+async def research_chat(request: Request, session_id: str | None = None):
+    redir = _cookie_auth_or_redirect(request)
+    if redir:
+        return redir
+    import uuid as _uuid
+
+    from trading.llm.client import whitelist_ids
+    from trading.llm.store import get_by_session as _get_conv
+
+    sid = session_id or f"web-{_uuid.uuid4().hex[:10]}"
+    conv = await _get_conv(sid)
+    backtests = await apidb.list_backtests(limit=20, status="completed")
+    strategies = await apidb.list_strategies()
+    return TEMPLATES.TemplateResponse(
+        request,
+        "research_chat.html",
+        {
+            "session_id": sid,
+            "conversation": conv,
+            "backtests": [_backtest_row_to_dict(r) for r in backtests],
+            "strategies": strategies,
+            "models": whitelist_ids(),
+            "default_model": get_settings().llm_default_model,
+        },
+    )
 
 
 # --------------------------------------------------------------- helpers

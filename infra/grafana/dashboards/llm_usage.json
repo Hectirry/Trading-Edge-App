@@ -1,0 +1,114 @@
+{
+  "id": null,
+  "uid": "tea-llm-usage",
+  "title": "TEA — LLM usage",
+  "tags": ["tea", "phase5", "llm"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Cost today (USD)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0)::float AS value FROM research.llm_usage_daily WHERE day = current_date;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Sessions today",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COALESCE(SUM(sessions), 0)::int AS value FROM research.llm_usage_daily WHERE day = current_date;"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Tokens today",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COALESCE(SUM(tokens), 0)::int AS value FROM research.llm_usage_daily WHERE day = current_date;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active sessions (<4h)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS value FROM research.llm_conversations WHERE updated_at > now() - interval '4 hours';"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Daily cost by user (USD)",
+      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT day::timestamp AS time, user_id AS metric, cost_usd::float AS value FROM research.llm_usage_daily ORDER BY day;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Top models (last 7d)",
+      "gridPos": { "x": 12, "y": 5, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT model, COUNT(*) AS sessions, SUM(tokens_in + tokens_out) AS tokens, SUM(cost_usd)::float AS cost_usd FROM research.llm_conversations WHERE updated_at > now() - interval '7 days' GROUP BY model ORDER BY cost_usd DESC;"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Sessions per user (last 7d)",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT user_id, SUM(sessions) AS sessions, SUM(tokens) AS tokens, SUM(cost_usd)::float AS cost_usd FROM research.llm_usage_daily WHERE day > current_date - 7 GROUP BY user_id ORDER BY cost_usd DESC;"
+        }
+      ]
+    }
+  ]
+}
