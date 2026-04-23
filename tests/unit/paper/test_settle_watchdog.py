@@ -132,7 +132,7 @@ async def test_watchdog_uses_paper_tick_when_available(monkeypatch) -> None:
         assert cid == pos.condition_id
         return 70_800.0, close_ts + 3, "paper_tick"
 
-    async def fake_first_tick(cid):
+    async def fake_first_tick(cid, *, window_close_ts=None):
         assert cid == pos.condition_id
         return 70_000.0, "paper_tick_first_spot"
 
@@ -159,7 +159,7 @@ async def test_watchdog_falls_back_to_ohlcv_after_120s() -> None:
     async def fake_paper_tick(*_a, **_k):
         return None, 0.0, "no_paper_tick"
 
-    async def fake_first_tick(_cid):
+    async def fake_first_tick(_cid, *, window_close_ts=None):
         return None, "no_first_tick"
 
     async def fake_ohlcv(close_ts):
@@ -188,7 +188,7 @@ async def test_watchdog_uses_ohlcv_open_when_first_tick_missing() -> None:
     async def fake_paper_tick(*_a, **_k):
         return 70_800.0, pos.window_close_ts, "paper_tick"
 
-    async def fake_first_tick(_cid):
+    async def fake_first_tick(_cid, *, window_close_ts=None):
         return None, "no_first_tick"
 
     async def fake_ohlcv(close_ts):
