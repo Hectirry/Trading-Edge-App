@@ -1,0 +1,257 @@
+[
+  {
+    "t_in_window": 190.0,
+    "implied": 0.3,
+    "action": "SKIP",
+    "side": "NONE",
+    "reason": "outside_entry_window",
+    "signal_features": {}
+  },
+  {
+    "t_in_window": 190.0,
+    "implied": 0.48,
+    "action": "SKIP",
+    "side": "NONE",
+    "reason": "outside_entry_window",
+    "signal_features": {}
+  },
+  {
+    "t_in_window": 190.0,
+    "implied": 0.7,
+    "action": "SKIP",
+    "side": "NONE",
+    "reason": "outside_entry_window",
+    "signal_features": {}
+  },
+  {
+    "t_in_window": 205.0,
+    "implied": 0.3,
+    "action": "ENTER",
+    "side": "YES_UP",
+    "reason": "edge=+0.6500 micro_prob=0.9500 regime=uptrend",
+    "signal_features": {
+      "m30_bps": 32.366071,
+      "m60_bps": 66.069429,
+      "m90_bps": 100.0,
+      "rv_90s": 1.2e-05,
+      "tick_up_ratio": 0.988889,
+      "micro_prob": 0.95,
+      "edge": 0.65,
+      "regime": "uptrend",
+      "ema8": 110.0,
+      "ema34": 100.0,
+      "adx_14": 25.0,
+      "consecutive_same_dir": 3,
+      "implied_prob_yes": 0.3,
+      "pm_spread_bps": 50.0
+    }
+  },
+  {
+    "t_in_window": 205.0,
+    "implied": 0.48,
+    "action": "ENTER",
+    "side": "YES_UP",
+    "reason": "edge=+0.4700 micro_prob=0.9500 regime=uptrend",
+    "signal_features": {
+      "m30_bps": 32.366071,
+      "m60_bps": 66.069429,
+      "m90_bps": 100.0,
+      "rv_90s": 1.2e-05,
+      "tick_up_ratio": 0.988889,
+      "micro_prob": 0.95,
+      "edge": 0.47,
+      "regime": "uptrend",
+      "ema8": 110.0,
+      "ema34": 100.0,
+      "adx_14": 25.0,
+      "consecutive_same_dir": 3,
+      "implied_prob_yes": 0.48,
+      "pm_spread_bps": 50.0
+    }
+  },
+  {
+    "t_in_window": 205.0,
+    "implied": 0.7,
+    "action": "ENTER",
+    "side": "YES_UP",
+    "reason": "edge=+0.2500 micro_prob=0.9500 regime=uptrend",
+    "signal_features": {
+      "m30_bps": 32.366071,
+      "m60_bps": 66.069429,
+      "m90_bps": 100.0,
+      "rv_90s": 1.2e-05,
+      "tick_up_ratio": 0.988889,
+      "micro_prob": 0.95,
+      "edge": 0.25,
+      "regime": "uptrend",
+      "ema8": 110.0,
+      "ema34": 100.0,
+      "adx_14": 25.0,
+      "consecutive_same_dir": 3,
+      "implied_prob_yes": 0.7,
+      "pm_spread_bps": 50.0
+    }
+  },
+  {
+    "t_in_window": 210.0,
+    "implied": 0.3,
+    "action": "ENTER",
+    "side": "YES_UP",
+    "reason": "edge=+0.6500 micro_prob=0.9500 regime=uptrend",
+    "signal_features": {
+      "m30_bps": 32.366071,
+      "m60_bps": 66.069429,
+      "m90_bps": 100.0,
+      "rv_90s": 1.2e-05,
+      "tick_up_ratio": 0.988889,
+      "micro_prob": 0.95,
+      "edge": 0.65,
+      "regime": "uptrend",
+      "ema8": 110.0,
+      "ema34": 100.0,
+      "adx_14": 25.0,
+      "consecutive_same_dir": 3,
+      "implied_prob_yes": 0.3,
+      "pm_spread_bps": 50.0
+    }
+  },
+  {
+    "t_in_window": 210.0,
+    "implied": 0.48,
+    "action": "ENTER",
+    "side": "YES_UP",
+    "reason": "edge=+0.4700 micro_prob=0.9500 regime=uptrend",
+    "signal_features": {
+      "m30_bps": 32.366071,
+      "m60_bps": 66.069429,
+      "m90_bps": 100.0,
+      "rv_90s": 1.2e-05,
+      "tick_up_ratio": 0.988889,
+      "micro_prob": 0.95,
+      "edge": 0.47,
+      "regime": "uptrend",
+      "ema8": 110.0,
+      "ema34": 100.0,
+      "adx_14": 25.0,
+      "consecutive_same_dir": 3,
+      "implied_prob_yes": 0.48,
+      "pm_spread_bps": 50.0
+    }
+  },
+  {
+    "t_in_window": 210.0,
+    "implied": 0.7,
+    "action": "ENTER",
+    "side": "YES_UP",
+    "reason": "edge=+0.2500 micro_prob=0.9500 regime=uptrend",
+    "signal_features": {
+      "m30_bps": 32.366071,
+      "m60_bps": 66.069429,
+      "m90_bps": 100.0,
+      "rv_90s": 1.2e-05,
+      "tick_up_ratio": 0.988889,
+      "micro_prob": 0.95,
+      "edge": 0.25,
+      "regime": "uptrend",
+      "ema8": 110.0,
+      "ema34": 100.0,
+      "adx_14": 25.0,
+      "consecutive_same_dir": 3,
+      "implied_prob_yes": 0.7,
+      "pm_spread_bps": 50.0
+    }
+  },
+  {
+    "t_in_window": 215.0,
+    "implied": 0.3,
+    "action": "ENTER",
+    "side": "YES_UP",
+    "reason": "edge=+0.6500 micro_prob=0.9500 regime=uptrend",
+    "signal_features": {
+      "m30_bps": 32.366071,
+      "m60_bps": 66.069429,
+      "m90_bps": 100.0,
+      "rv_90s": 1.2e-05,
+      "tick_up_ratio": 0.988889,
+      "micro_prob": 0.95,
+      "edge": 0.65,
+      "regime": "uptrend",
+      "ema8": 110.0,
+      "ema34": 100.0,
+      "adx_14": 25.0,
+      "consecutive_same_dir": 3,
+      "implied_prob_yes": 0.3,
+      "pm_spread_bps": 50.0
+    }
+  },
+  {
+    "t_in_window": 215.0,
+    "implied": 0.48,
+    "action": "ENTER",
+    "side": "YES_UP",
+    "reason": "edge=+0.4700 micro_prob=0.9500 regime=uptrend",
+    "signal_features": {
+      "m30_bps": 32.366071,
+      "m60_bps": 66.069429,
+      "m90_bps": 100.0,
+      "rv_90s": 1.2e-05,
+      "tick_up_ratio": 0.988889,
+      "micro_prob": 0.95,
+      "edge": 0.47,
+      "regime": "uptrend",
+      "ema8": 110.0,
+      "ema34": 100.0,
+      "adx_14": 25.0,
+      "consecutive_same_dir": 3,
+      "implied_prob_yes": 0.48,
+      "pm_spread_bps": 50.0
+    }
+  },
+  {
+    "t_in_window": 215.0,
+    "implied": 0.7,
+    "action": "ENTER",
+    "side": "YES_UP",
+    "reason": "edge=+0.2500 micro_prob=0.9500 regime=uptrend",
+    "signal_features": {
+      "m30_bps": 32.366071,
+      "m60_bps": 66.069429,
+      "m90_bps": 100.0,
+      "rv_90s": 1.2e-05,
+      "tick_up_ratio": 0.988889,
+      "micro_prob": 0.95,
+      "edge": 0.25,
+      "regime": "uptrend",
+      "ema8": 110.0,
+      "ema34": 100.0,
+      "adx_14": 25.0,
+      "consecutive_same_dir": 3,
+      "implied_prob_yes": 0.7,
+      "pm_spread_bps": 50.0
+    }
+  },
+  {
+    "t_in_window": 220.0,
+    "implied": 0.3,
+    "action": "SKIP",
+    "side": "NONE",
+    "reason": "outside_entry_window",
+    "signal_features": {}
+  },
+  {
+    "t_in_window": 220.0,
+    "implied": 0.48,
+    "action": "SKIP",
+    "side": "NONE",
+    "reason": "outside_entry_window",
+    "signal_features": {}
+  },
+  {
+    "t_in_window": 220.0,
+    "implied": 0.7,
+    "action": "SKIP",
+    "side": "NONE",
+    "reason": "outside_entry_window",
+    "signal_features": {}
+  }
+]

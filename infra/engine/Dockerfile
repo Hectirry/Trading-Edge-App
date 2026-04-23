@@ -27,6 +27,10 @@ RUN pip install --no-cache-dir \
     orjson==3.10.12 \
     numpy==2.2.1 \
     pandas==2.2.3 \
+    scikit-learn==1.6.0 \
+    lightgbm==4.5.0 \
+    optuna==4.1.0 \
+    psycopg2-binary==2.9.10 \
     jinja2==3.1.5 \
     plotly==5.24.1 \
     tomli==2.2.1 \

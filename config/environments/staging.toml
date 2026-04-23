@@ -29,6 +29,17 @@ params_file = "config/strategies/pbt5m_imbalance_v3.toml"
 enabled = true
 params_file = "config/strategies/pbt5m_trend_confirm_t1_v1.toml"
 
+[strategies.last_90s_forecaster_v1]
+enabled = true
+params_file = "config/strategies/pbt5m_last_90s_forecaster_v1.toml"
+
+[strategies.last_90s_forecaster_v2]
+# Shadow mode until the training CLI promotes a model row
+# (ADR 0011). The strategy also auto-shadows when no active row exists
+# in research.models, so enabling it here is safe.
+enabled = true
+params_file = "config/strategies/pbt5m_last_90s_forecaster_v2.toml"
+
 [deployment]
 service = "tea-engine"
 # staging: no confirmation file required.

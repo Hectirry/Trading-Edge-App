@@ -754,6 +754,72 @@ docker compose restart tea-grafana
 The bot does not attach context refs. Use `/research/chat` in the
 dashboard if you want to pin backtests / ADRs to the prompt.
 
+## Phase 3.6 — last_90s_forecaster v1 + v2
+
+See ADR 0011. Two new paper strategies that enter at t≈210 s using
+micro momentum (last 90 s of BTC) + macro regime (EMA 8/34 + ADX) +
+Polymarket microstructure. v1 is rules-based; v2 is a LightGBM on
+top of the same features.
+
+### Services affected
+
+- `tea-engine` bumped to `tea-engine:0.4.0` (adds `lightgbm==4.5.0`,
+  `optuna==4.1.0`, `scikit-learn==1.6.0`, `psycopg2-binary`).
+- `tea-postgres` gains two tables via `08_models_and_health.sql`
+  (`research.models`, `research.strategy_health`).
+- `tea-grafana` auto-loads `TEA — Strategy comparator 4-way`.
+
+### Apply
+
+```bash
+# Schema (idempotent)
+docker compose exec -T tea-postgres \
+  psql -U "$TEA_PG_USER" -d "$TEA_PG_DB" \
+  < infra/postgres/init/08_models_and_health.sql
+
+# Rebuild engine with ML deps
+docker compose up -d --build tea-engine
+docker compose restart tea-grafana
+```
+
+### Train the v2 model
+
+Mount the two polybot SQLite files (already declared in
+docker-compose.yml as read-only volumes on tea-engine):
+
+```bash
+docker compose exec tea-engine python -m trading.cli.train_last90s \
+  --from 2026-01-15 --to 2026-04-20 \
+  --polybot-btc5m /polybot-btc5m-data/polybot_agent.db \
+  --polybot-agent /btc-tendencia-data/polybot_agent.db \
+  --optuna-trials 200 --time-budget-s 3600 \
+  --promote
+```
+
+`--promote` only flips `is_active = TRUE` when all three gates pass:
+`AUC_test ≥ 0.55 AND Brier_test ≤ 0.245 AND ECE_val ≤ 0.05`. Otherwise
+the row is written with `is_active = FALSE` and the strategy stays in
+shadow mode (SKIPs every ENTER, logs features + probs for analysis).
+
+### Defaults + invariants
+
+- Entry window: `t_in_window ∈ [205, 215]`. Outside → SKIP
+  `outside_entry_window`.
+- v1 `momentum_divisor_bps = 40` (provisional; grid-search before first
+  heavy deploy — see ADR 0011).
+- Both strategies start with `$5` fixed stake until they log 20 settled
+  paper trades, then switch to Kelly-fractional (¼) capped at `$15`.
+- Strategy source code is NEVER shipped to the LLM provider
+  (`llm_include_source = false`). Orthogonal to the feature work; just
+  a reminder that ADR 0010 still holds.
+
+### Hard wall
+
+- v2 has no tools / no function calls. It runs a frozen
+  `lightgbm.Booster` against a deterministic feature vector and returns
+  a single float.
+- Retraining is manual — no auto-retrain path in v2.
+
 ## Known caveats / Phase 0 pending items
 
 - B2 bucket not yet configured. `backup_db.sh` stores locally; remote

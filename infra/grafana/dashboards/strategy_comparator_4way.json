@@ -1,0 +1,99 @@
+{
+  "id": null,
+  "uid": "tea-strategy-comparator-4way",
+  "title": "TEA — Strategy comparator 4-way",
+  "tags": ["tea", "phase3.6", "strategies"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-7d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Per-strategy summary (last 7 d paper)",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT o.strategy_id, COUNT(*) FILTER (WHERE f_settle.order_id IS NOT NULL) AS n_trades, ROUND(SUM(COALESCE((f_settle.metadata::jsonb->>'pnl')::numeric, 0))::numeric, 2) AS pnl_usd, ROUND(100.0 * AVG(CASE WHEN (f_settle.metadata::jsonb->>'resolution') = 'win' THEN 1.0 WHEN (f_settle.metadata::jsonb->>'resolution') = 'loss' THEN 0.0 END)::numeric, 1) AS win_rate_pct, ROUND(AVG((f_settle.metadata::jsonb->>'pnl')::numeric)::numeric, 3) AS avg_pnl FROM trading.orders o LEFT JOIN trading.fills f_settle ON f_settle.order_id=o.order_id AND f_settle.metadata::jsonb->>'kind'='settle' WHERE o.mode='paper' AND o.ts_submit > now() - interval '7 days' GROUP BY o.strategy_id ORDER BY pnl_usd DESC NULLS LAST;"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Cumulative paper PnL per strategy",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT f.ts AS time, o.strategy_id AS metric, SUM((f.metadata::jsonb->>'pnl')::numeric) OVER (PARTITION BY o.strategy_id ORDER BY f.ts) AS equity FROM trading.fills f JOIN trading.orders o ON o.order_id = f.order_id WHERE f.mode='paper' AND f.metadata::jsonb->>'kind'='settle' AND f.ts > now() - interval '7 days' ORDER BY f.ts;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Cumulative paper PnL — aggregate (all strategies)",
+      "gridPos": { "x": 0, "y": 18, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT f.ts AS time, SUM((f.metadata::jsonb->>'pnl')::numeric) OVER (ORDER BY f.ts) AS equity_total FROM trading.fills f WHERE f.mode='paper' AND f.metadata::jsonb->>'kind'='settle' AND f.ts > now() - interval '7 days' ORDER BY f.ts;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Trades per strategy per day",
+      "gridPos": { "x": 12, "y": 18, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT date_trunc('day', o.ts_submit) AS day, o.strategy_id, COUNT(*) FILTER (WHERE f_settle.order_id IS NOT NULL) AS settled, COUNT(*) AS entered FROM trading.orders o LEFT JOIN trading.fills f_settle ON f_settle.order_id=o.order_id AND f_settle.metadata::jsonb->>'kind'='settle' WHERE o.mode='paper' AND o.ts_submit > now() - interval '7 days' GROUP BY day, o.strategy_id ORDER BY day DESC, o.strategy_id;"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Active LightGBM model (v2)",
+      "gridPos": { "x": 0, "y": 27, "w": 12, "h": 6 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT name, version, trained_at, metrics->'test_auc' AS test_auc, metrics->'test_brier' AS test_brier, metrics->'ece_val' AS ece_val FROM research.models WHERE is_active = TRUE ORDER BY trained_at DESC;"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Strategy health — rolling Sharpe per trade",
+      "gridPos": { "x": 12, "y": 27, "w": 12, "h": 6 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT ts AS time, strategy_id AS metric, sharpe_per_trade AS value FROM research.strategy_health WHERE ts > now() - interval '7 days' ORDER BY ts;"
+        }
+      ]
+    }
+  ]
+}

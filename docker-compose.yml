@@ -85,7 +85,7 @@ services:
     build:
       context: .
       dockerfile: infra/engine/Dockerfile
-    image: tea-engine:0.3.0
+    image: tea-engine:0.4.0
     container_name: tea-engine
     restart: unless-stopped
     environment:
@@ -137,6 +137,8 @@ services:
       # Dual-path KILL_SWITCH (ADR 0009). Engine reads both; API writes here.
       - tea_control:/var/tea/control
       - tea_research_reports:/app/src/trading/research/reports
+      # Required only for the whitelisted /system/restart endpoint.
+      - /var/run/docker.sock:/var/run/docker.sock
     logging: *default-logging
     networks: [tea_internal, tea_edge]
     labels:
