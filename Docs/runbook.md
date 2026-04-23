@@ -836,6 +836,54 @@ shadow mode (SKIPs every ENTER, logs features + probs for analysis).
   root-equivalent for any member of the `docker` group, so this does
   not change the effective blast radius.
 
+## Phase 3.8 — Walk-forward automation
+
+Unified CLI `trading.cli.walk_forward` runs walk-forward across all
+seven strategies. Two execution paths inside:
+
+- ML (`hmm_regime_btc5m`, `last_90s_forecaster_v2`,
+  `contest_ensemble_v1`) — refit the model on each IS window and
+  evaluate AUC/Brier on OOS.
+- Rules (`imbalance_v3`, `trend_confirm_t1_v1`,
+  `last_90s_forecaster_v1`, `contest_avengers_v1`) — replay via the
+  Phase-2 `run_walk_forward` infrastructure over polybot SQLite,
+  measuring trade count + PnL per fold.
+
+Defaults: 5-day IS / 1-day OOS / step 1-day (approved for 3.8).
+Results land in `research.walk_forward_runs` (per-fold detail in
+`splits` JSONB; aggregate in `summary`). `--promote-winner` is
+opt-in — promotion stays manual by default; summary includes a
+`promote_recommendation` ∈ {promote, soak_longer, hold,
+insufficient_folds} the operator can act on.
+
+### Manual runs
+
+```bash
+# ML — rolling retrain
+docker compose exec tea-engine python -m trading.cli.walk_forward \
+    --strategy last_90s_forecaster_v2 \
+    --from 2026-03-01 --to 2026-04-20
+
+# Rules — replay
+docker compose exec tea-engine python -m trading.cli.walk_forward \
+    --strategy imbalance_v3 \
+    --params config/strategies/pbt5m_imbalance_v3.toml \
+    --from 2026-01-01 --to 2026-04-20 \
+    --polybot-db /polybot-btc5m-data/polybot.db
+```
+
+### Scheduled cron
+
+The Telegram watcher's `run_walk_forward_sunday()` coroutine fires
+every Sunday at 02:00 UTC, one strategy per minute (7 strategies
+staggered over 7 minutes) using a trailing 30-day window.
+
+### Dashboard
+
+`TEA — Walk-forward` (Grafana, uid `tea-walk-forward`): table of
+runs, median AUC_oos timeline by strategy, stability index timeline,
+and per-fold detail for the most recent run of each strategy.
+
 ## Phase 0 acceptance — status
 
 | # | Criterion                                      | Status |

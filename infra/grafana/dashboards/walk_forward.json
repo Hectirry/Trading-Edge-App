@@ -1,0 +1,71 @@
+{
+  "id": null,
+  "uid": "tea-walk-forward",
+  "title": "TEA — Walk-forward",
+  "tags": ["tea", "phase3.8", "walk-forward"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Walk-forward runs (last 30d)",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT started_at, strategy_name, status, verdict, summary->>'dominant_verdict' AS dominant, summary->>'promote_recommendation' AS recommend, (summary->>'stability_index')::numeric AS stability, (summary->>'median_auc_oos')::numeric AS median_auc_oos, (summary->>'total_pnl_oos')::numeric AS total_pnl_oos, summary->>'n_folds' AS n_folds FROM research.walk_forward_runs WHERE started_at > now() - interval '30 days' ORDER BY started_at DESC LIMIT 100;"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Median OOS AUC per run, by strategy",
+      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT started_at AS time, strategy_name AS metric, (summary->>'median_auc_oos')::float AS value FROM research.walk_forward_runs WHERE summary->>'median_auc_oos' IS NOT NULL AND started_at > now() - interval '30 days' ORDER BY started_at;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0.3, "max": 0.8 } }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Stability index per run, by strategy",
+      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT started_at AS time, strategy_name AS metric, (summary->>'stability_index')::float AS value FROM research.walk_forward_runs WHERE summary->>'stability_index' IS NOT NULL AND started_at > now() - interval '30 days' ORDER BY started_at;"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } }
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Latest per-fold detail (most recent run per strategy)",
+      "gridPos": { "x": 0, "y": 19, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "tea-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (strategy_name) id, strategy_name, splits FROM research.walk_forward_runs ORDER BY strategy_name, started_at DESC) SELECT l.strategy_name, (f->>'fold')::int AS fold, (f->>'is_from')::timestamptz AS is_from, (f->>'oos_from')::timestamptz AS oos_from, (f->>'auc_is')::numeric AS auc_is, (f->>'auc_oos')::numeric AS auc_oos, (f->>'brier_oos')::numeric AS brier_oos, (f->>'n_trades_oos')::int AS n_oos, (f->>'pnl_oos')::numeric AS pnl_oos, f->>'verdict' AS verdict FROM latest l, LATERAL jsonb_array_elements(l.splits) AS f ORDER BY l.strategy_name, fold;"
+        }
+      ]
+    }
+  ]
+}

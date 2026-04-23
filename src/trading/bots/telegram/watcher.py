@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import time
 
 import redis.asyncio as redis
@@ -108,6 +108,55 @@ class Watcher:
                 await proc.wait()
             await asyncio.sleep(60)
 
+    async def run_walk_forward_sunday(self) -> None:
+        """Fire per-strategy walk-forward runs every Sunday at 02:00 UTC.
+
+        Reports only — promotion is manual (ADR 0011/0012). A Sunday
+        cron covers the week's fresh paper data + avoids colliding with
+        the Sunday 01:00 paper_vs_backtest job. One strategy per
+        minute to spread load across the hour.
+        """
+        log.info("watcher.walk_forward_sunday.started")
+        fired_for_week: str = ""
+        strategies = [
+            "hmm_regime_btc5m",
+            "last_90s_forecaster_v2",
+            "contest_ensemble_v1",
+            "imbalance_v3",
+            "trend_confirm_t1_v1",
+            "last_90s_forecaster_v1",
+            "contest_avengers_v1",
+        ]
+        while True:
+            now = datetime.now(tz=UTC)
+            iso_week = now.strftime("%G-W%V")
+            if now.weekday() == 6 and now.hour == 2 and fired_for_week != iso_week:
+                fired_for_week = iso_week
+                log.info("watcher.walk_forward_sunday.firing", week=iso_week)
+                t_to = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                t_from = t_to - timedelta(days=30)
+                for i, strategy in enumerate(strategies):
+                    # Stagger start by strategy index × 60 s so the
+                    # tea-engine CPU isn't pegged by 7 Optuna runs at
+                    # once.
+                    if i > 0:
+                        await asyncio.sleep(60)
+                    argv = [
+                        "python", "-m", "trading.cli.walk_forward",
+                        "--strategy", strategy,
+                        "--from", t_from.date().isoformat(),
+                        "--to", t_to.date().isoformat(),
+                    ]
+                    log.info("watcher.wf.launch", strategy=strategy)
+                    try:
+                        proc = await asyncio.create_subprocess_exec(*argv)
+                        await proc.wait()
+                    except Exception as e:
+                        log.warning(
+                            "watcher.wf.err", strategy=strategy, err=str(e),
+                        )
+            await asyncio.sleep(60)
+
     async def run_control_observability(self) -> None:
         if not self.settings.observability_loop_enabled:
             log.info("watcher.control_observability.disabled")
@@ -204,6 +253,7 @@ async def main_async() -> None:
         w.run_heartbeat(),
         w.run_daily_report(),
         w.run_weekly_comparison(),
+        w.run_walk_forward_sunday(),
         w.run_control_observability(),
         poller.run(),
     )
