@@ -235,3 +235,21 @@ async def test_pnl_rejects_unknown_period(poller) -> None:
     poller._api_get.assert_not_awaited()
     msg = poller._reply.await_args.args[1]
     assert "today|semana|mes" in msg
+
+
+@pytest.mark.asyncio
+async def test_restart_requires_service_arg(poller) -> None:
+    await poller._handle_update(_update(111, 42, "/restart"))
+    msg = poller._reply.await_args.args[1]
+    assert "usage: /restart <service>" in msg
+
+
+@pytest.mark.asyncio
+async def test_restart_calls_control_api(poller) -> None:
+    poller._control_api.restart_service = AsyncMock(
+        return_value={"requested_service": "engine", "container_name": "tea-engine"}
+    )
+    await poller._handle_update(_update(111, 42, "/restart engine"))
+    poller._control_api.restart_service.assert_awaited_once_with("engine")
+    msg = poller._reply.await_args.args[1]
+    assert "restarted engine" in msg

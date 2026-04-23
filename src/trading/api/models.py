@@ -63,6 +63,18 @@ class KillswitchResponse(BaseModel):
     at: datetime
 
 
+class RestartServiceRequest(BaseModel):
+    service: str
+
+
+class RestartServiceResponse(BaseModel):
+    requested_service: str
+    container_name: str
+    status: str
+    detail: str
+    restarted_at: datetime
+
+
 class LLMContextRef(BaseModel):
     type: Literal["backtest", "strategy", "recent_trades", "paper_stats", "adr"]
     id: str

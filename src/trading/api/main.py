@@ -30,6 +30,14 @@ from trading.api.models import (
     LLMChatResponse,
     NewBacktestRequest,
     PauseResponse,
+    RestartServiceRequest,
+    RestartServiceResponse,
+)
+from trading.api.service_control import (
+    ServiceControlError,
+)
+from trading.api.service_control import (
+    restart_service as restart_docker_service,
 )
 from trading.api.worker import run_job
 from trading.common.config import get_settings
@@ -61,6 +69,27 @@ def _cookie_auth_or_redirect(request: Request):
     if not tok or tok != get_settings().api_token:
         return RedirectResponse("/login", status_code=303)
     return None
+
+
+async def _status_payload() -> dict:
+    r = redis.from_url(_redis_url(), decode_responses=False)
+    hb = await r.get("tea:engine:last_heartbeat")
+    import json as _json
+
+    data = _json.loads(hb) if hb else None
+    age = None
+    if data:
+        age = datetime.now(tz=UTC).timestamp() - float(data.get("ts", 0))
+    strategies = await apidb.list_strategies()
+    today = datetime.now(tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    pnl_today = await apidb.pnl_in_period(today, today + timedelta(days=1), strategy=None)
+    return {
+        "engine_up": age is not None and age < 60,
+        "heartbeat_age_s": age,
+        "strategies": strategies,
+        "pnl_today": pnl_today,
+        "kill_switch_active": _kill_switch_active(),
+    }
 
 
 # -------------------------------------------------------------- JSON: backtests
@@ -156,23 +185,16 @@ async def api_resume(name: str, request: Request):
 
 @app.get("/api/v1/status", dependencies=[Depends(require_token)])
 async def api_status():
-    r = redis.from_url(_redis_url(), decode_responses=False)
-    hb = await r.get("tea:engine:last_heartbeat")
-    import json as _json
+    return await _status_payload()
 
-    data = _json.loads(hb) if hb else None
-    age = None
-    if data:
-        age = datetime.now(tz=UTC).timestamp() - float(data.get("ts", 0))
-    strategies = await apidb.list_strategies()
-    today = datetime.now(tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    pnl_today = await apidb.pnl_in_period(today, today + timedelta(days=1), strategy=None)
+
+@app.get("/health", dependencies=[Depends(require_token)])
+@app.get("/api/v1/health", dependencies=[Depends(require_token)])
+async def api_health():
+    status = await _status_payload()
     return {
-        "engine_up": age is not None and age < 60,
-        "heartbeat_age_s": age,
-        "strategies": strategies,
-        "pnl_today": pnl_today,
-        "kill_switch_active": _kill_switch_active(),
+        "ok": bool(status.get("engine_up")) and not bool(status.get("kill_switch_active")),
+        **status,
     }
 
 
@@ -185,6 +207,11 @@ async def api_positions(strategy: str | None = None):
 async def api_recent_trades(n: int = 5, strategy: str | None = None):
     n = max(1, min(50, n))
     return {"trades": await apidb.recent_trades(n, strategy)}
+
+
+@app.get("/trades/recent", dependencies=[Depends(require_token)])
+async def api_recent_trades_compat(limit: int = 5, strategy: str | None = None):
+    return await api_recent_trades(n=limit, strategy=strategy)
 
 
 @app.get("/api/v1/pnl", dependencies=[Depends(require_token)])
@@ -205,6 +232,42 @@ async def api_pnl(period: str = "today", strategy: str | None = None):
         raise HTTPException(status_code=400, detail="period must be today|semana|mes")
     data = await apidb.pnl_in_period(since, until, strategy)
     return {"period": period, "from": since, "to": until, "strategy": strategy, **data}
+
+
+@app.get("/metrics/pnl", dependencies=[Depends(require_token)])
+@app.get("/api/v1/metrics/pnl", dependencies=[Depends(require_token)])
+async def api_pnl_metrics(period: str = "today", strategy: str | None = None):
+    return await api_pnl(period=period, strategy=strategy)
+
+
+@app.post(
+    "/system/restart",
+    response_model=RestartServiceResponse,
+    dependencies=[Depends(require_token)],
+)
+@app.post(
+    "/api/v1/system/restart",
+    response_model=RestartServiceResponse,
+    dependencies=[Depends(require_token)],
+)
+async def api_restart_service(req: RestartServiceRequest):
+    try:
+        resolved = await restart_docker_service(req.service)
+    except ServiceControlError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+
+    log.warning(
+        "api.system.restart",
+        requested_service=resolved.requested_name,
+        container_name=resolved.container_name,
+    )
+    return RestartServiceResponse(
+        requested_service=resolved.requested_name,
+        container_name=resolved.container_name,
+        status="restarted",
+        detail="restart requested via Docker API",
+        restarted_at=datetime.now(tz=UTC),
+    )
 
 
 # ---------------------------------------------------------------- killswitch

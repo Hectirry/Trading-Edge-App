@@ -40,6 +40,12 @@ class Settings(BaseSettings):
         default="http://tea-api:8000",
         description="Internal base URL for tea-api; telegram bot uses this to dispatch",
     )
+    docker_socket_path: str = "/var/run/docker.sock"
+    docker_restart_enabled: bool = False
+    restart_service_map: str = (
+        "api=tea-api,engine=tea-engine,telegram=tea-telegram-bot,"
+        "postgres=tea-postgres,redis=tea-redis,grafana=tea-grafana,ingestor=tea-ingestor"
+    )
     dashboard_public_url: str = Field(
         default="https://187-124-130-221.nip.io",
         description="Public base URL the bot uses when linking back to /research/<id>",
@@ -47,6 +53,10 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_authorized_users: str = ""  # CSV of user_ids
+    observability_loop_enabled: bool = False
+    observability_interval_s: int = 900
+    observability_pnl_alert_threshold: float = -100.0
+    observability_stale_trade_minutes: int = 120
 
     # LLM copilot (ADR 0010). Zero execution surface: these settings control
     # only the read-only research endpoint.

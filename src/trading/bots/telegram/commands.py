@@ -16,6 +16,8 @@ from typing import Any
 import httpx
 import redis.asyncio as redis_async
 
+from trading.bots.telegram import tools as control_tools
+from trading.bots.telegram.api_client import InternalAPIError, TradingAPIClient
 from trading.common.config import get_settings
 from trading.common.logging import get_logger
 
@@ -66,6 +68,11 @@ class CommandPoller:
         }
         self._offset: int = 0
         self._http = httpx.AsyncClient(timeout=HTTP_TIMEOUT_S)
+        self._control_api = TradingAPIClient(
+            base_url=self.api_base,
+            api_token=self.api_token,
+            timeout_s=HTTP_TIMEOUT_S,
+        )
         # killswitch FSM: user_id -> (prompted_at UTC datetime)
         self._killswitch_pending: dict[int, datetime] = {}
         # Redis client for LLM session memory (shared with engine/api).
@@ -152,6 +159,7 @@ class CommandPoller:
             "/positions": self._cmd_positions,
             "/trades": self._cmd_trades,
             "/pnl": self._cmd_pnl,
+            "/restart": self._cmd_restart,
             "/pause": self._cmd_pause,
             "/resume": self._cmd_resume,
             "/killswitch": self._cmd_killswitch,
@@ -208,6 +216,7 @@ class CommandPoller:
             "/positions           open paper positions\n"
             "/trades [N]          last N paper trades (default 10)\n"
             "/pnl [today|semana|mes]   pnl for the period (default today)\n"
+            "/restart <service>   restart a whitelisted Docker service via API\n"
             "/pause <strategy>    pause a strategy\n"
             "/resume <strategy>   resume a strategy\n"
             "/killswitch          arm KILL_SWITCH (two-step)\n"
@@ -307,6 +316,22 @@ class CommandPoller:
             chat_id,
             f"pnl ({period}): {_fmt_money(body.get('pnl'))}  "
             f"(n={body.get('n_trades')})",
+        )
+
+    async def _cmd_restart(self, chat_id: int, user_id: int, args: str) -> None:
+        service = args.split()[0].lower() if args else ""
+        if not service:
+            await self._reply(chat_id, "usage: /restart <service>")
+            return
+        try:
+            body = await control_tools.restart_service(self._control_api, service)
+        except InternalAPIError as e:
+            await self._reply(chat_id, f"restart failed: {e}")
+            return
+        await self._reply(
+            chat_id,
+            f"♻️ restarted {body.get('requested_service', service)} "
+            f"({body.get('container_name', '?')})",
         )
 
     async def _cmd_pause(self, chat_id: int, user_id: int, args: str) -> None:
