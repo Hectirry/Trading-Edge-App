@@ -99,6 +99,7 @@ class PaperDriver:
         reconciliation_task = asyncio.create_task(self._reconciliation_loop())
         kill_switch_task = asyncio.create_task(self._kill_switch_loop())
         eval_summary_task = asyncio.create_task(self._eval_summary_loop())
+        settle_watchdog_task = asyncio.create_task(self._settle_watchdog_loop())
         try:
             async with self._redis.pubsub() as pubsub:
                 await pubsub.subscribe(REDIS_CHANNEL, self._control_channel)
@@ -125,6 +126,7 @@ class PaperDriver:
             reconciliation_task.cancel()
             kill_switch_task.cancel()
             eval_summary_task.cancel()
+            settle_watchdog_task.cancel()
             self.strategy.on_stop()
 
     async def _rehydrate_pause_state(self) -> None:
@@ -296,6 +298,8 @@ class PaperDriver:
             book_last_update_ts=book_last_ts,
             t_in_window=ctx.t_in_window,
             latest_entry_t=float(self.cfg.latest_entry_t),
+            window_close_ts=ctx.window_close_ts,
+            open_price=ctx.open_price,
         )
         if pos is None:
             self._bump_counter("fill_miss")
@@ -312,25 +316,59 @@ class PaperDriver:
         )
 
     async def _settle_position(self, slug: str, ctx: TickContext) -> None:
-        pos = self._open_positions.pop(slug, None)
+        """Settle driven by an incoming tick past t_in_window=300.
+
+        Kept for the happy path when the recorder is still publishing at
+        the moment the window closes. Most settles now come through the
+        watchdog (see ``_settle_watchdog_loop``) because ticks usually
+        stop before ``t_in_window`` reaches 300.
+        """
+        pos = self._open_positions.get(slug)
         if pos is None:
             return
         settle_price = ctx.chainlink_price or ctx.spot_price
         if settle_price <= 0:
             log.error("paper.driver.settle_no_price", slug=slug)
             return
-        # open_price already captured in tick recorder → ctx.open_price.
         went_up = settle_price > ctx.open_price
+        await self._settle_from_values(
+            slug,
+            settle_ts=ctx.ts,
+            settle_price=settle_price,
+            went_up=went_up,
+            source="tick",
+        )
+
+    async def _settle_from_values(
+        self,
+        slug: str,
+        *,
+        settle_ts: float,
+        settle_price: float,
+        went_up: bool,
+        source: str,
+    ) -> None:
+        pos = self._open_positions.pop(slug, None)
+        if pos is None:
+            return
         resolution, _exit_price, pnl = await self.exec.settle(
             pos,
-            settle_ts=ctx.ts,
+            settle_ts=settle_ts,
             settle_price=settle_price,
             outcome_went_up=went_up,
         )
         self._daily_pnl += pnl
-        self.risk.on_trade_closed(pnl, now=ctx.ts)
+        self.risk.on_trade_closed(pnl, now=settle_ts)
         await self.tg.send(T.trade_close(resolution=resolution, pnl=pnl, slug=slug))
-
+        log.info(
+            "paper.driver.settled",
+            slug=slug,
+            source=source,
+            settle_price=settle_price,
+            open_price=pos.open_price,
+            went_up=went_up,
+            pnl=pnl,
+        )
         # Alert-only threshold.
         if self._daily_pnl <= self.cfg.daily_alert_pnl_threshold:
             await self.tg.send(
@@ -339,8 +377,132 @@ class PaperDriver:
                     pct=self._daily_pnl / max(self.cfg.stake_usd, 1.0) / 333.33,  # approx %
                 )
             )
-
         self._cleanup_market(slug)
+
+    async def _settle_watchdog_loop(self) -> None:
+        """Periodically settle open positions whose window has already closed.
+
+        The live recorder stops publishing ticks for markets that went
+        ``closed=true`` on gamma, so ``_handle_tick`` rarely sees a tick
+        with ``t_in_window >= 300``. This loop walks the in-memory
+        positions and, for any whose ``window_close_ts`` is in the past
+        by > 15 s, derives the settle price from the last recorded
+        ``market_data.paper_ticks`` row and, failing that, from the 1 m
+        Binance candle at ``window_close_ts``.
+        """
+        import time
+
+        while True:
+            try:
+                await asyncio.sleep(15)
+                now = time.time()
+                expired = [
+                    (slug, pos)
+                    for slug, pos in list(self._open_positions.items())
+                    if pos.window_close_ts > 0
+                    and (now - pos.window_close_ts) > 15
+                ]
+                for slug, pos in expired:
+                    await self._settle_via_watchdog(slug, pos, now)
+            except Exception as e:
+                log.warning("paper.driver.settle_watchdog.err", err=str(e))
+
+    async def _settle_via_watchdog(self, slug: str, pos: Position, now: float) -> None:
+        age = now - pos.window_close_ts
+        # Step 1: last paper_tick for this market.
+        settle_price, settle_ts, source = await self._last_paper_tick_price(
+            pos.condition_id, pos.window_close_ts
+        )
+        if settle_price is None and age > 120:
+            # Step 2: Binance 1 m close for the minute of window_close_ts.
+            settle_price, settle_ts = await self._ohlcv_close_at(
+                pos.window_close_ts
+            )
+            source = "ohlcv"
+        if settle_price is None:
+            if age > 600:  # 10 min past close and still nothing → give up.
+                log.error(
+                    "paper.driver.settle_timeout",
+                    slug=slug,
+                    close_ts=pos.window_close_ts,
+                )
+                # Drop so we don't keep retrying forever; operator can
+                # backfill if needed.
+                self._open_positions.pop(slug, None)
+                self._cleanup_market(slug)
+            return
+        open_price = pos.open_price
+        if open_price is None or open_price <= 0:
+            # Recorder sometimes writes open_price=0. Fall back to the 1 m
+            # candle at window_open = close - 5 min so went_up is still
+            # deterministic.
+            open_price_ohlcv, _ = await self._ohlcv_close_at(
+                pos.window_close_ts - 300
+            )
+            if open_price_ohlcv is None or open_price_ohlcv <= 0:
+                log.error(
+                    "paper.driver.settle_no_open_price",
+                    slug=slug,
+                    close_ts=pos.window_close_ts,
+                )
+                return
+            open_price = open_price_ohlcv
+            source = f"{source}+ohlcv_open"
+        went_up = settle_price > open_price
+        await self._settle_from_values(
+            slug,
+            settle_ts=settle_ts,
+            settle_price=settle_price,
+            went_up=went_up,
+            source=source,
+        )
+
+    async def _last_paper_tick_price(
+        self, condition_id: str, close_ts: float
+    ) -> tuple[float | None, float, str]:
+        """Return the most recent ``chainlink_price`` (or spot fallback) from
+        ``market_data.paper_ticks`` for this market, published at or
+        before ``close_ts + 5 s``."""
+        cutoff_dt = datetime.fromtimestamp(close_ts + 5, tz=UTC)
+        try:
+            async with acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT ts, chainlink_price, spot_price "
+                    "FROM market_data.paper_ticks "
+                    "WHERE condition_id = $1 AND ts <= $2 "
+                    "ORDER BY ts DESC LIMIT 1",
+                    condition_id,
+                    cutoff_dt,
+                )
+        except Exception as e:
+            log.warning("paper.driver.settle.paper_tick_query_err", err=str(e))
+            return None, close_ts, "paper_tick_err"
+        if row is None:
+            return None, close_ts, "no_paper_tick"
+        price = row["chainlink_price"] or row["spot_price"]
+        if price is None:
+            return None, close_ts, "no_price_in_tick"
+        return float(price), row["ts"].timestamp(), "paper_tick"
+
+    async def _ohlcv_close_at(self, close_ts: float) -> tuple[float | None, float]:
+        """Look up the Binance 1 m candle whose ``ts`` equals the minute of
+        ``close_ts`` for BTCUSDT and return its close price."""
+        minute_ts = int(close_ts // 60 * 60)
+        minute_dt = datetime.fromtimestamp(minute_ts, tz=UTC)
+        try:
+            async with acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT close FROM market_data.crypto_ohlcv "
+                    "WHERE exchange='binance' AND symbol='BTCUSDT' "
+                    "AND interval='1m' AND ts=$1",
+                    minute_dt,
+                )
+        except Exception as e:
+            log.warning("paper.driver.settle.ohlcv_err", err=str(e))
+            return None, close_ts
+        if row is None:
+            return None, close_ts
+        return float(row["close"]), close_ts
 
     def _cleanup_market(self, slug: str) -> None:
         self._indicators.pop(slug, None)

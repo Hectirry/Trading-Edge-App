@@ -47,6 +47,14 @@ class Position:
     slippage: float
     fee: float
     client_order_id: str
+    # Added for the post-window settle watchdog (see ADR 0005 + paper driver):
+    # ticks stop arriving once the recorder unsubscribes from closed markets,
+    # so the driver can no longer rely on `t_in_window >= 300` to trigger
+    # settlement. Capturing the close ts + open price at entry lets the
+    # watchdog settle the position later from DB snapshots.
+    window_close_ts: float = 0.0
+    open_price: float = 0.0
+    strategy_id: str = ""
 
 
 def _client_order_id(strategy: str, slug: str, ts: float, side: Side) -> str:
@@ -82,6 +90,8 @@ class SimulatedExecutionClient:
         book_last_update_ts: float,
         t_in_window: float,
         latest_entry_t: float,
+        window_close_ts: float = 0.0,
+        open_price: float = 0.0,
     ) -> Position | None:
         if self.kill_switch_active():
             log.warning(
@@ -205,6 +215,9 @@ class SimulatedExecutionClient:
             slippage=fill.slippage,
             fee=fill.fee,
             client_order_id=coid,
+            window_close_ts=window_close_ts,
+            open_price=open_price,
+            strategy_id=self.strategy_id,
         )
         log.info(
             "paper.exec.entry",
