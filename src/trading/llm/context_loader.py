@@ -196,26 +196,48 @@ async def _load_strategy(ref: ContextRef) -> LoadedContext:
 
 
 async def _load_recent_trades(ref: ContextRef) -> LoadedContext:
-    """id format: ``<strategy_id>:<N>``, N capped at 50."""
+    """id format: ``<strategy_id>:<N>``, N capped at 50.
+
+    ``<strategy_id>`` of ``*`` means "any paper strategy" and drops the
+    filter — useful as a default context ref so the bot can answer
+    "what happened today" without enumerating active strategies.
+    """
     strategy_id, _, n_str = ref.id.partition(":")
     try:
         n = max(1, min(50, int(n_str))) if n_str else 20
     except ValueError:
         n = 20
+    wildcard = strategy_id in ("", "*", "all")
     async with acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT o.ts_submit, o.instrument_id, o.price AS entry_price, "
-            "(f.metadata::jsonb->>'pnl')::numeric AS pnl, "
-            "(f.metadata::jsonb->>'resolution') AS resolution "
-            "FROM trading.orders o "
-            "LEFT JOIN trading.fills f "
-            "  ON f.order_id = o.order_id "
-            "  AND f.metadata::jsonb->>'kind' = 'settle' "
-            "WHERE o.mode = 'paper' AND o.strategy_id = $1 "
-            "ORDER BY o.ts_submit DESC LIMIT $2",
-            strategy_id,
-            n,
-        )
+        if wildcard:
+            rows = await conn.fetch(
+                "SELECT o.ts_submit, o.strategy_id, o.instrument_id, "
+                "o.price AS entry_price, "
+                "(f.metadata::jsonb->>'pnl')::numeric AS pnl, "
+                "(f.metadata::jsonb->>'resolution') AS resolution "
+                "FROM trading.orders o "
+                "LEFT JOIN trading.fills f "
+                "  ON f.order_id = o.order_id "
+                "  AND f.metadata::jsonb->>'kind' = 'settle' "
+                "WHERE o.mode = 'paper' "
+                "ORDER BY o.ts_submit DESC LIMIT $1",
+                n,
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT o.ts_submit, o.strategy_id, o.instrument_id, "
+                "o.price AS entry_price, "
+                "(f.metadata::jsonb->>'pnl')::numeric AS pnl, "
+                "(f.metadata::jsonb->>'resolution') AS resolution "
+                "FROM trading.orders o "
+                "LEFT JOIN trading.fills f "
+                "  ON f.order_id = o.order_id "
+                "  AND f.metadata::jsonb->>'kind' = 'settle' "
+                "WHERE o.mode = 'paper' AND o.strategy_id = $1 "
+                "ORDER BY o.ts_submit DESC LIMIT $2",
+                strategy_id,
+                n,
+            )
     payload = [
         {k: (str(v) if v is not None else None) for k, v in dict(r).items()} for r in rows
     ]

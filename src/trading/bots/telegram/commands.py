@@ -443,15 +443,17 @@ class CommandPoller:
         if not args:
             await self._reply(
                 chat_id,
-                "usage: /ask <pregunta>\nSin context_refs desde Telegram. "
-                "Usa /research/chat en el dashboard para adjuntar backtests/ADRs.",
+                "usage: /ask <pregunta>\nSin context_refs explícitos desde Telegram,"
+                " se inyectan defaults (paper_stats 7d por estrategia activa + "
+                "últimos 10 trades). Usa /research/chat para pinear backtests/ADRs.",
             )
             return
         sid, is_new = await self._get_or_create_session(chat_id, user_id)
+        default_refs = await self._default_ask_refs()
         body = {
             "session_id": sid,
             "message": args,
-            "context_refs": [],
+            "context_refs": default_refs,
         }
         await self._reply(chat_id, "🧠 thinking…")
         code, resp = await self._api_post("/api/v1/llm/chat", json_body=body)
@@ -467,6 +469,24 @@ class CommandPoller:
             f"  · model {resp.get('model', '?')}"
         )
         await self._reply(chat_id, footer)
+
+    async def _default_ask_refs(self) -> list[dict]:
+        """Refs injected when /ask is called without explicit context.
+
+        Goal: give the model something concrete to ground answers in so
+        it does not reply "no tengo acceso" to basic questions about the
+        paper engine. Falls back gracefully if /api/v1/strategies is
+        unreachable.
+        """
+        refs: list[dict] = [{"type": "recent_trades", "id": "*:10"}]
+        code, body = await self._api_get("/api/v1/strategies")
+        if code == 200 and isinstance(body, dict):
+            for s in (body.get("strategies") or [])[:5]:
+                name = s.get("name")
+                if not name:
+                    continue
+                refs.append({"type": "paper_stats", "id": f"{name}:7"})
+        return refs
 
     async def _cmd_ask_reset(self, chat_id: int, user_id: int, args: str) -> None:
         key = await self._session_key(chat_id)
