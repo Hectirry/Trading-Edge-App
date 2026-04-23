@@ -209,12 +209,15 @@ class PaperDriver:
     async def _handle_tick(self, tick: dict) -> None:
         ctx = _tick_from_dict(tick)
         slug = ctx.market_slug
-        # Rolling 30-tick buffer + IndicatorStack per market.
+        # Rolling 120-tick buffer (~2 min at 1 Hz) + IndicatorStack per
+        # market. The 30-tick window matched imbalance_v3's needs;
+        # last_90s_forecaster_v1/_v2 need at least 90 samples to compute
+        # the 90 s momentum, so we enlarge to 120 for headroom.
         indicators = self._indicators.setdefault(slug, IndicatorStack())
         buf = self._recent_ticks.setdefault(slug, [])
-        ctx.recent_ticks = buf[-30:]
+        ctx.recent_ticks = buf[-120:]
         buf.append(ctx)
-        if len(buf) > 60:
+        if len(buf) > 140:
             buf.pop(0)
         indicators.update(ctx)
 
