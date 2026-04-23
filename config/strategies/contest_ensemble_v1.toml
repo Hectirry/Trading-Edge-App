@@ -1,0 +1,59 @@
+# contest_ensemble_v1 — Moondev contest, ML ensemble + conformal (ADR 0012).
+
+name = "contest_ensemble_v1"
+description = "HMM regime + candle patterns + L3 predictors → LightGBM meta → conformal abstention."
+
+[params]
+# Multi-checkpoint; the strategy picks the nearest tick per window.
+checkpoints_s = [60, 120, 180, 210, 240, 270]
+checkpoint_tolerance_s = 3.0
+
+# Conformal gate (α width of abstention band).
+conformal_alpha = 0.25
+
+# Ignore any market whose HMM posterior puts it in high_vol; this
+# strategy avoids volatile regimes entirely.
+skip_on_high_vol = true
+
+[sizing]
+# Contest is scored on accuracy, not PnL, but we still place $5
+# paper stakes so settle/backfill flows are exercised.
+stake_usd = 5.0
+kelly_fraction = 0.0     # Kelly disabled; contest is binary correct/wrong
+kelly_min_trades = 99999
+kelly_max_stake_usd = 5.0
+
+[backtest]
+earliest_entry_t_s = 60
+latest_entry_t_s = 275
+window_seconds = 300
+decision_interval_s = 1
+
+[fill_model]
+slippage_bps = 10.0
+fill_probability = 1.0
+apply_fee_in_backtest = true
+fee_k = 0.05
+
+[risk]
+bypass_in_backtest = true
+cooldown_seconds = 30
+max_position_size_usd = 5.0
+daily_loss_limit_usd = 50.0
+daily_trade_limit = 999999
+min_edge_bps = 0
+min_z_score = 0.0
+min_pm_depth_usd = 15.0
+skip_if_spread_bps = 500
+loss_pause_threshold_usd = 5.0
+loss_pause_window_minutes = 30
+loss_pause_duration_minutes = 30
+
+[paper]
+capital_usd = 1000.0
+daily_loss_alert_pct = 0.03
+daily_loss_pause_pct = 0.05
+# v1 ships without the LightGBM meta (dataset < 3 k samples); the
+# explicit-rules fallback inside the strategy still enters. Set to
+# true to force shadow if a bad model is promoted.
+shadow = false

@@ -31,6 +31,8 @@ RUN pip install --no-cache-dir \
     scikit-learn==1.6.0 \
     lightgbm==4.5.0 \
     optuna==4.1.0 \
+    hmmlearn==0.3.3 \
+    statsmodels==0.14.4 \
     psycopg2-binary==2.9.10 \
     jinja2==3.1.5 \
     plotly==5.24.1 \

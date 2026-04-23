@@ -37,7 +37,77 @@ from trading.paper.tick_recorder import TickRecorder
 log = get_logger("cli.paper_engine")
 
 
-async def _load_strategy(name: str, cfg: dict, macro_provider=None) -> StrategyBase:
+async def _load_hmm_detector():
+    """Return an ``HMMRegimeDetector`` for the active ``hmm_regime_btc5m``
+    row, else ``NullHMMRegimeDetector``. Strategies that don't need an
+    HMM are unaffected.
+    """
+    from pathlib import Path as _Path
+
+    from trading.common.db import acquire
+    from trading.engine.features.hmm_regime import (
+        HMMRegimeDetector,
+        NullHMMRegimeDetector,
+    )
+
+    try:
+        async with acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT path FROM research.models "
+                "WHERE name = $1 AND is_active = TRUE",
+                "hmm_regime_btc5m",
+            )
+    except Exception as e:
+        log.warning("hmm.lookup_err", err=str(e))
+        return NullHMMRegimeDetector()
+    if row is None:
+        log.info("hmm.no_active_row")
+        return NullHMMRegimeDetector()
+    bundle_path = _Path(row["path"]) / "model.pkl"
+    if not bundle_path.exists():
+        log.warning("hmm.bundle_missing", path=str(bundle_path))
+        return NullHMMRegimeDetector()
+    try:
+        return HMMRegimeDetector.load(bundle_path)
+    except Exception as e:
+        log.warning("hmm.load_err", err=str(e))
+        return NullHMMRegimeDetector()
+
+
+async def _shared_providers_refresh_loop(
+    chainlink_provider, liq_provider, macro_provider,
+) -> None:
+    """Keep the Chainlink + liquidation + macro caches warm.
+
+    Chainlink cache TTL short (5 s), liq clusters medium (30 s), macro
+    candles slow (every 5 min). One loop, staggered cadence via
+    counters, so we keep a single asyncio task per strategy needs.
+    """
+    import asyncio as _asyncio
+
+    i = 0
+    while True:
+        try:
+            await chainlink_provider.refresh()
+            if i % 6 == 0:
+                await liq_provider.refresh()
+            if i % 60 == 0:
+                await macro_provider.refresh(hours=6)
+        except Exception as e:
+            log.warning("shared_providers.refresh_err", err=str(e))
+        i += 1
+        await _asyncio.sleep(5)
+
+
+async def _load_strategy(
+    name: str,
+    cfg: dict,
+    macro_provider=None,
+    *,
+    hmm_detector=None,
+    chainlink_provider=None,
+    liq_provider=None,
+) -> StrategyBase:
     if name == "imbalance_v3":
         from trading.strategies.polymarket_btc5m.imbalance_v3 import ImbalanceV3
 
@@ -60,6 +130,31 @@ async def _load_strategy(name: str, cfg: dict, macro_provider=None) -> StrategyB
 
         runner = await load_runner_async()
         return Last90sForecasterV2(cfg, macro_provider=macro_provider, model=runner)
+    if name == "contest_ensemble_v1":
+        from trading.strategies.polymarket_btc5m.contest_ensemble_v1 import (
+            ContestEnsembleV1,
+            load_meta_model_async_factory,
+        )
+
+        meta_model = await load_meta_model_async_factory()()
+        return ContestEnsembleV1(
+            cfg,
+            macro_provider=macro_provider,
+            hmm_detector=hmm_detector,
+            meta_model=meta_model,
+        )
+    if name == "contest_avengers_v1":
+        from trading.strategies.polymarket_btc5m.contest_avengers_v1 import (
+            ContestAvengersV1,
+        )
+
+        return ContestAvengersV1(
+            cfg,
+            macro_provider=macro_provider,
+            hmm_detector=hmm_detector,
+            chainlink_provider=chainlink_provider,
+            liq_provider=liq_provider,
+        )
     raise RuntimeError(f"unknown strategy: {name}")
 
 
@@ -99,9 +194,13 @@ async def main_async() -> None:
     )
     tg = T.TelegramClient()
 
-    # Shared macro provider for last_90s_forecaster_v1/_v2.
+    # Shared macro provider for last_90s_forecaster_v1/_v2 + contest_*.
     from trading.strategies.polymarket_btc5m._macro_provider import (
         PostgresMacroProvider,
+    )
+    from trading.strategies.polymarket_btc5m._shared_providers import (
+        CachedChainlinkSnapshot,
+        CachedLiqClusters,
     )
 
     macro_provider = PostgresMacroProvider()
@@ -114,6 +213,20 @@ async def main_async() -> None:
     except Exception as e:
         log.warning("paper_engine.macro_provider.refresh_err", err=str(e))
 
+    # Shared providers for contest_avengers_v1 (and future strategies).
+    chainlink_provider = CachedChainlinkSnapshot()
+    liq_provider = CachedLiqClusters()
+    try:
+        await chainlink_provider.refresh()
+        await liq_provider.refresh()
+    except Exception as e:
+        log.warning("paper_engine.shared_providers.refresh_err", err=str(e))
+
+    # Try to load the HMM regime detector from the active
+    # research.models row. Returns a NullHMMRegimeDetector if no row
+    # exists — strategies degrade cleanly.
+    hmm_detector = await _load_hmm_detector()
+
     # Per-strategy drivers.
     drivers: list[PaperDriver] = []
     strategies_cfg = staging_cfg.get("strategies", {})
@@ -122,7 +235,13 @@ async def main_async() -> None:
             log.info("paper_engine.strategy.disabled", name=name)
             continue
         strategy_cfg = tomli.loads(Path(entry["params_file"]).read_text())
-        strategy = await _load_strategy(name, strategy_cfg, macro_provider=macro_provider)
+        strategy = await _load_strategy(
+            name, strategy_cfg,
+            macro_provider=macro_provider,
+            hmm_detector=hmm_detector,
+            chainlink_provider=chainlink_provider,
+            liq_provider=liq_provider,
+        )
         risk = RiskManager({"risk": strategy_cfg["risk"]})
         fill_params = FillParams(
             fee_k=0.05,
@@ -159,6 +278,12 @@ async def main_async() -> None:
         asyncio.create_task(refresh_markets_loop(state), name="market_refresh"),
         asyncio.create_task(tick_recorder.run(), name="tick_recorder"),
         asyncio.create_task(heartbeat.run(), name="heartbeat"),
+        asyncio.create_task(
+            _shared_providers_refresh_loop(
+                chainlink_provider, liq_provider, macro_provider,
+            ),
+            name="shared_providers_refresh",
+        ),
     ]
     for d in drivers:
         tasks.append(asyncio.create_task(d.run(), name=f"driver_{d.strategy.name}"))

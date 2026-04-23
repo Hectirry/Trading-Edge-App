@@ -76,6 +76,36 @@ class Settings(BaseSettings):
     llm_max_context_tokens: int = 50_000
     llm_max_reply_tokens: int = 4096
 
+    # Phase 3.7 — ADR 0012. Oracle + liquidation ingestion. All keys
+    # optional; features degrade gracefully when missing.
+    chainlink_datastreams_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "TEA_CHAINLINK_DATASTREAMS_KEY", "CHAINLINK_DATASTREAMS_KEY",
+        ),
+    )
+    chainlink_datastreams_url: str = "https://api.dataengine.chain.link"
+    chainlink_datastreams_feed_id: str = (
+        # BTC/USD v3 schema. Placeholder; swap when keys arrive.
+        "0x0003b2c7b2a5aba6a4d9b35ed7e04ce72a5e9f1b4a9f6a5b2cd38f9b72a3e4c1"
+    )
+    alchemy_polygon_url: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "TEA_ALCHEMY_POLYGON_URL", "ALCHEMY_POLYGON_URL",
+        ),
+    )
+    chainlink_eac_btcusd_polygon: str = "0xc907E116054Ad103354f2D350FD2514433D57F6f"
+    chainlink_refresh_interval_s: int = 15
+    coinalyze_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "TEA_COINALYZE_API_KEY", "COINALYZE_API_KEY",
+        ),
+    )
+    coinalyze_base_url: str = "https://api.coinalyze.net/v1"
+    coinalyze_poll_interval_s: int = 60
+
     @property
     def pg_dsn(self) -> str:
         return f"postgresql://{self.pg_user}:{self.pg_password}@{self.pg_host}:{self.pg_port}/{self.pg_db}"

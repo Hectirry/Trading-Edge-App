@@ -40,6 +40,19 @@ params_file = "config/strategies/pbt5m_last_90s_forecaster_v1.toml"
 enabled = true
 params_file = "config/strategies/pbt5m_last_90s_forecaster_v2.toml"
 
+[strategies.contest_ensemble_v1]
+# ADR 0012 — Moondev contest A/B arm A. Boots with the explicit-rules
+# ensemble; upgrades to the LightGBM meta when a model row is promoted.
+enabled = true
+params_file = "config/strategies/contest_ensemble_v1.toml"
+
+[strategies.contest_avengers_v1]
+# ADR 0012 — Moondev contest A/B arm B. Hard-threshold confidence
+# gate + oracle-lag + liquidation-gravity signals. Degrades gracefully
+# when Chainlink/Coinalyze keys aren't configured (capped confidence).
+enabled = true
+params_file = "config/strategies/contest_avengers_v1.toml"
+
 [deployment]
 service = "tea-engine"
 # staging: no confirmation file required.

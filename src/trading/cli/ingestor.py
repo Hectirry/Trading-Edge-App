@@ -49,6 +49,8 @@ class Supervisor:
                 self._guarded("bybit_trades", self.bybit.stream_trades, TRADE_SYMBOLS)
             ),
             asyncio.create_task(self._guarded("polymarket_loop", self._polymarket_loop)),
+            asyncio.create_task(self._guarded("chainlink_updates", self._chainlink_loop)),
+            asyncio.create_task(self._guarded("coinalyze_liquidations", self._coinalyze_loop)),
         ]
         log.info("supervisor.started", tasks=len(tasks))
 
@@ -130,6 +132,23 @@ class Supervisor:
                 streamed_ids = set(ids)
                 last_stream_task = asyncio.create_task(self.polymarket.stream_prices(ids))
             await asyncio.sleep(60)
+
+    async def _chainlink_loop(self) -> None:
+        """Poll Chainlink (Data Streams or Polygon EAC via Alchemy) and
+        upsert into market_data.chainlink_updates. No-ops when neither
+        key is configured (ADR 0012).
+        """
+        from trading.ingest.chainlink.adapter import run_chainlink_loop
+
+        await run_chainlink_loop()
+
+    async def _coinalyze_loop(self) -> None:
+        """Poll Coinalyze /liquidation-history and upsert into
+        market_data.liquidation_clusters. No-ops when key missing.
+        """
+        from trading.ingest.coinalyze.adapter import run_liquidation_loop
+
+        await run_liquidation_loop()
 
 
 def main() -> None:
