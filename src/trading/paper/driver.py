@@ -434,23 +434,25 @@ class PaperDriver:
                 self._open_positions.pop(slug, None)
                 self._cleanup_market(slug)
             return
-        open_price = pos.open_price
+        # pos.open_price is captured at ENTRY time (typically t=180–215),
+        # by which point the Chainlink feed can already be off-window for
+        # this market. The truthful open-vs-close comparison is the
+        # FIRST paper_tick for this market (t_in_window ≈ 0) vs the
+        # LAST paper_tick (t_in_window ≈ 300). Fetch both spots and use
+        # those; fall back to ohlcv 1m candle if either is missing.
+        open_price, open_source = await self._first_paper_tick_spot(
+            pos.condition_id
+        )
+        if open_price is None:
+            open_price, _ = await self._ohlcv_close_at(pos.window_close_ts - 300)
+            open_source = "ohlcv"
         if open_price is None or open_price <= 0:
-            # Recorder sometimes writes open_price=0. Fall back to the 1 m
-            # candle at window_open = close - 5 min so went_up is still
-            # deterministic.
-            open_price_ohlcv, _ = await self._ohlcv_close_at(
-                pos.window_close_ts - 300
+            log.error(
+                "paper.driver.settle_no_open_price",
+                slug=slug, close_ts=pos.window_close_ts,
             )
-            if open_price_ohlcv is None or open_price_ohlcv <= 0:
-                log.error(
-                    "paper.driver.settle_no_open_price",
-                    slug=slug,
-                    close_ts=pos.window_close_ts,
-                )
-                return
-            open_price = open_price_ohlcv
-            source = f"{source}+ohlcv_open"
+            return
+        source = f"{source}+open={open_source}"
         went_up = settle_price > open_price
         await self._settle_from_values(
             slug,
@@ -463,63 +465,65 @@ class PaperDriver:
     async def _last_paper_tick_price(
         self, condition_id: str, close_ts: float
     ) -> tuple[float | None, float, str]:
-        """Return the most recent price from ``market_data.paper_ticks``
-        for this market, published at or before ``close_ts + 5 s``.
+        """Return the most recent ``spot_price`` from
+        ``market_data.paper_ticks`` for this market, published at or
+        before ``close_ts + 5 s``.
 
-        Prefers ``chainlink_price`` because that's what Polymarket
-        resolves against — but the paper tick recorder sometimes keeps
-        the last-seen Chainlink value after the RTDS feed disconnects,
-        which makes every market at every close_ts settle at the same
-        frozen oracle price. Detect that by comparing the tick at the
-        close cutoff against one taken ~3 minutes earlier; if
-        chainlink_price hasn't moved AND spot_price has, treat the
-        oracle field as stale and fall back to spot_price. This keeps
-        settle directionally correct until the RTDS feed reconnects.
+        We intentionally use spot rather than chainlink_price here:
+        Polymarket resolves against Chainlink Data Streams but our
+        paper-tick recorder reads the on-chain EAC feed via Alchemy
+        RPC, which updates very infrequently (~once per window) and
+        can freeze entirely when the RPC hiccups. Spot (Binance 1 Hz
+        WebSocket) is the most reliable directional signal we have in
+        paper; live + contest evaluation will use a real Chainlink
+        Data Streams feed when the key is provisioned (ADR 0010
+        addendum).
         """
         cutoff_dt = datetime.fromtimestamp(close_ts + 5, tz=UTC)
-        earlier_dt = datetime.fromtimestamp(close_ts - 180, tz=UTC)
         try:
             async with acquire() as conn:
                 latest = await conn.fetchrow(
-                    "SELECT ts, chainlink_price, spot_price "
+                    "SELECT ts, spot_price, chainlink_price "
                     "FROM market_data.paper_ticks "
                     "WHERE condition_id = $1 AND ts <= $2 "
                     "ORDER BY ts DESC LIMIT 1",
                     condition_id, cutoff_dt,
-                )
-                earlier = await conn.fetchrow(
-                    "SELECT chainlink_price, spot_price "
-                    "FROM market_data.paper_ticks "
-                    "WHERE condition_id = $1 AND ts <= $2 "
-                    "ORDER BY ts DESC LIMIT 1",
-                    condition_id, earlier_dt,
                 )
         except Exception as e:
             log.warning("paper.driver.settle.paper_tick_query_err", err=str(e))
             return None, close_ts, "paper_tick_err"
         if latest is None:
             return None, close_ts, "no_paper_tick"
-
-        cl_now = latest["chainlink_price"]
         sp_now = latest["spot_price"]
-        cl_earlier = earlier["chainlink_price"] if earlier is not None else None
-        sp_earlier = earlier["spot_price"] if earlier is not None else None
-
-        chainlink_stale = (
-            cl_now is not None
-            and cl_earlier is not None
-            and float(cl_now) == float(cl_earlier)
-            and sp_now is not None
-            and sp_earlier is not None
-            and float(sp_now) != float(sp_earlier)
-        )
-
-        if cl_now is not None and not chainlink_stale:
-            return float(cl_now), latest["ts"].timestamp(), "paper_tick"
         if sp_now is not None:
-            src = "paper_tick_spot_fallback" if chainlink_stale else "paper_tick_spot"
-            return float(sp_now), latest["ts"].timestamp(), src
+            return float(sp_now), latest["ts"].timestamp(), "paper_tick_spot"
+        cl_now = latest["chainlink_price"]
+        if cl_now is not None:
+            return float(cl_now), latest["ts"].timestamp(), "paper_tick_chainlink"
         return None, close_ts, "no_price_in_tick"
+
+    async def _first_paper_tick_spot(
+        self, condition_id: str,
+    ) -> tuple[float | None, str]:
+        """Return the ``spot_price`` of the first paper_tick for this
+        market (t_in_window ≈ 0), which is our reference for "window
+        open BTC price" in the settle comparison."""
+        try:
+            async with acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT spot_price "
+                    "FROM market_data.paper_ticks "
+                    "WHERE condition_id = $1 AND spot_price IS NOT NULL "
+                    "AND spot_price > 0 "
+                    "ORDER BY t_in_window ASC, ts ASC LIMIT 1",
+                    condition_id,
+                )
+        except Exception as e:
+            log.warning("paper.driver.settle.first_tick_err", err=str(e))
+            return None, "first_tick_err"
+        if row is None or row["spot_price"] is None:
+            return None, "no_first_tick"
+        return float(row["spot_price"]), "paper_tick_first_spot"
 
     async def _ohlcv_close_at(self, close_ts: float) -> tuple[float | None, float]:
         """Look up the Binance 1 m candle whose ``ts`` equals the minute of

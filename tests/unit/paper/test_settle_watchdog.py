@@ -132,10 +132,15 @@ async def test_watchdog_uses_paper_tick_when_available(monkeypatch) -> None:
         assert cid == pos.condition_id
         return 70_800.0, close_ts + 3, "paper_tick"
 
+    async def fake_first_tick(cid):
+        assert cid == pos.condition_id
+        return 70_000.0, "paper_tick_first_spot"
+
     async def fake_ohlcv(close_ts):
         raise AssertionError("should not call ohlcv when paper_tick works")
 
     d._last_paper_tick_price = fake_paper_tick
+    d._first_paper_tick_spot = fake_first_tick
     d._ohlcv_close_at = fake_ohlcv
     # 30 s past close → above the 15 s threshold.
     await d._settle_via_watchdog("slug-a", pos, now=pos.window_close_ts + 30)
@@ -154,15 +159,18 @@ async def test_watchdog_falls_back_to_ohlcv_after_120s() -> None:
     async def fake_paper_tick(*_a, **_k):
         return None, 0.0, "no_paper_tick"
 
+    async def fake_first_tick(_cid):
+        return None, "no_first_tick"
+
     async def fake_ohlcv(close_ts):
-        # Returns the settle price when called at window_close_ts; if called
-        # at window_close_ts - 300 (for open fallback) return None to ensure
-        # we use the real pos.open_price.
         if close_ts == pos.window_close_ts:
             return 69_500.0, close_ts
+        if close_ts == pos.window_close_ts - 300:
+            return 70_000.0, close_ts
         return None, close_ts
 
     d._last_paper_tick_price = fake_paper_tick
+    d._first_paper_tick_spot = fake_first_tick
     d._ohlcv_close_at = fake_ohlcv
     # 130 s past close → above the 120 s ohlcv threshold.
     await d._settle_via_watchdog("slug-b", pos, now=pos.window_close_ts + 130)
@@ -172,14 +180,16 @@ async def test_watchdog_falls_back_to_ohlcv_after_120s() -> None:
 
 
 @pytest.mark.asyncio
-async def test_watchdog_uses_ohlcv_open_when_pos_open_is_zero() -> None:
+async def test_watchdog_uses_ohlcv_open_when_first_tick_missing() -> None:
     d = _bare_driver()
     pos = _pos(slug="slug-c", close_ts=3_000_000.0)
-    pos.open_price = 0.0  # simulate recorder that lost the open
     d._open_positions["slug-c"] = pos
 
     async def fake_paper_tick(*_a, **_k):
         return 70_800.0, pos.window_close_ts, "paper_tick"
+
+    async def fake_first_tick(_cid):
+        return None, "no_first_tick"
 
     async def fake_ohlcv(close_ts):
         if close_ts == pos.window_close_ts - 300:
@@ -187,6 +197,7 @@ async def test_watchdog_uses_ohlcv_open_when_pos_open_is_zero() -> None:
         return None, close_ts
 
     d._last_paper_tick_price = fake_paper_tick
+    d._first_paper_tick_spot = fake_first_tick
     d._ohlcv_close_at = fake_ohlcv
     await d._settle_via_watchdog("slug-c", pos, now=pos.window_close_ts + 30)
     _, _, price, went_up = d.exec.calls[0]
