@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,7 +50,13 @@ class Settings(BaseSettings):
 
     # LLM copilot (ADR 0010). Zero execution surface: these settings control
     # only the read-only research endpoint.
-    openrouter_api_key: str = ""
+    # Accept both the provider-conventional `OPENROUTER_API_KEY` (what
+    # OpenRouter docs use) and the TEA-prefixed `TEA_OPENROUTER_API_KEY`,
+    # so operators don't have to learn our prefix just to paste a key.
+    openrouter_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("TEA_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"),
+    )
     llm_default_model: str = "qwen/qwen3-max"
     llm_max_sessions_per_day: int = 50
     llm_max_tokens_per_session: int = 200_000
