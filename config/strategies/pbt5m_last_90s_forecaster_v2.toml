@@ -8,7 +8,7 @@ entry_window_start_s = 205
 entry_window_end_s = 215
 edge_threshold = 0.04
 # Matches v1's operational width (see pbt5m_last_90s_forecaster_v1.toml).
-spread_max_bps = 200.0
+spread_max_bps = 300.0
 adx_threshold = 20.0
 consecutive_min = 2
 
