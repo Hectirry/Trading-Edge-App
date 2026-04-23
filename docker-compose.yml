@@ -113,6 +113,8 @@ services:
       # Research reports live under the engine's working tree so they
       # survive container restarts via named volume.
       - tea_research_reports:/app/src/trading/research/reports
+      # Trained LightGBM models (ADR 0011).
+      - tea_models:/app/models
     logging: *default-logging
     networks: [tea_internal]
 
@@ -246,6 +248,8 @@ volumes:
     name: tea_grafana
   tea_research_reports:
     name: tea_research_reports
+  tea_models:
+    name: tea_models
   tea_control:
     name: tea_control
   tea_prom_data:

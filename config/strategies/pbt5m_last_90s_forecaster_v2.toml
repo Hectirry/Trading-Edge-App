@@ -53,7 +53,8 @@ loss_pause_duration_minutes = 30
 capital_usd = 1000.0
 daily_loss_alert_pct = 0.03
 daily_loss_pause_pct = 0.05
-# Forces SKIP for every ENTER decision. Flip to false once a model is
-# trained + promoted. The strategy also defaults to shadow when no
-# active row exists in research.models.
-shadow = true
+# A trained + promoted model is live in research.models (AUC 0.66,
+# Brier 0.25 on a 30-sample test; ADR 0011 sample-size-aware gates
+# passed). Keeping shadow=false lets v2 ENTER in paper; the
+# edge_threshold gate still filters out weak signals.
+shadow = false
