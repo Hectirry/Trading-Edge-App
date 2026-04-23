@@ -28,6 +28,12 @@ dev = [
     "ruff==0.8.4",
     "pre-commit==4.0.1",
 ]
+api = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "python-multipart==0.0.20",
+    "itsdangerous==2.2.0",
+]
 engine-live = [
     "nautilus_trader==1.215.0",
 ]
