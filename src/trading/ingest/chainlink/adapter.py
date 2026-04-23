@@ -37,18 +37,47 @@ async def run_chainlink_loop() -> None:
         source=type(watcher).__name__,
         interval_s=interval_s,
     )
+    # Stale-feed circuit breaker: if age_s > 60 s for MAX_STALE_STREAK
+    # consecutive polls, emit a single CRITICAL log so ops notice the
+    # Chainlink feed is not updating. Strategies will also see the
+    # stale rows and skip emitting signal.
+    MAX_STALE_STREAK = 5
+    STALE_AGE_S = 60.0
+    stale_streak = 0
+    stale_alert_fired = False
+
     while True:
         try:
             snap = await watcher.latest()
             if snap is not None:
                 now_ts = time.time()
+                age_s = float(max(0.0, now_ts - snap.updated_at_ts))
+                if age_s > STALE_AGE_S:
+                    stale_streak += 1
+                    if stale_streak >= MAX_STALE_STREAK and not stale_alert_fired:
+                        log.error(
+                            "chainlink.feed_stale",
+                            source=type(watcher).__name__,
+                            age_s=age_s, streak=stale_streak,
+                            round_id=int(snap.round_id),
+                        )
+                        stale_alert_fired = True
+                else:
+                    if stale_streak >= MAX_STALE_STREAK and stale_alert_fired:
+                        log.info(
+                            "chainlink.feed_recovered",
+                            source=type(watcher).__name__, age_s=age_s,
+                        )
+                    stale_streak = 0
+                    stale_alert_fired = False
+
                 row = (
                     datetime.fromtimestamp(now_ts, tz=UTC),
                     snap.feed,
                     int(snap.round_id),
                     Decimal(str(snap.answer)),
                     datetime.fromtimestamp(snap.updated_at_ts, tz=UTC),
-                    float(max(0.0, now_ts - snap.updated_at_ts)),
+                    age_s,
                     snap.source,
                 )
                 await upsert_many(

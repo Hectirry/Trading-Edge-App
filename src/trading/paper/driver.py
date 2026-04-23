@@ -479,15 +479,22 @@ class PaperDriver:
         Data Streams feed when the key is provisioned (ADR 0010
         addendum).
         """
+        # Time-bound to the current window. The recorder sometimes writes
+        # ticks for a market before its window opens (discovery
+        # lookahead) and the same condition_id may have stale ticks from
+        # an earlier day; without the lower bound the "latest" row could
+        # be hours old and flip went_up by hundreds of bps.
+        window_start_dt = datetime.fromtimestamp(close_ts - 305, tz=UTC)
         cutoff_dt = datetime.fromtimestamp(close_ts + 5, tz=UTC)
         try:
             async with acquire() as conn:
                 latest = await conn.fetchrow(
                     "SELECT ts, spot_price, chainlink_price "
                     "FROM market_data.paper_ticks "
-                    "WHERE condition_id = $1 AND ts <= $2 "
+                    "WHERE condition_id = $1 "
+                    "  AND ts BETWEEN $2 AND $3 "
                     "ORDER BY ts DESC LIMIT 1",
-                    condition_id, cutoff_dt,
+                    condition_id, window_start_dt, cutoff_dt,
                 )
         except Exception as e:
             log.warning("paper.driver.settle.paper_tick_query_err", err=str(e))
@@ -503,45 +510,34 @@ class PaperDriver:
         return None, close_ts, "no_price_in_tick"
 
     async def _first_paper_tick_spot(
-        self, condition_id: str, window_close_ts: float | None = None,
+        self, condition_id: str, window_close_ts: float,
     ) -> tuple[float | None, str]:
         """Return the spot_price of the first paper_tick for THIS
         window (≈ window_close_ts - 300).
 
-        Restricting by ``ts >= close_ts - 305`` is load-bearing: the
-        recorder sometimes discovers a market ahead of time and writes
-        ticks hours before the window opens, or under the recorder
-        backfill writes with t_in_window reset. Without the time bound
-        we'd pick up a stale spot from a completely different window
-        and compute went_up backwards.
+        ``window_close_ts`` is required. The recorder sometimes writes
+        ticks for a market hours before its window opens (discovery
+        lookahead) or under backfills with a reset t_in_window; without
+        the time bound the "earliest" row can be from a completely
+        different window and computes went_up backwards.
         """
+        if window_close_ts is None or window_close_ts <= 0:
+            raise ValueError(
+                "window_close_ts is required to prevent stale cross-window picks"
+            )
+        window_start_dt = datetime.fromtimestamp(window_close_ts - 305, tz=UTC)
+        window_end_dt = datetime.fromtimestamp(window_close_ts + 5, tz=UTC)
         try:
             async with acquire() as conn:
-                if window_close_ts is not None:
-                    window_start_dt = datetime.fromtimestamp(
-                        window_close_ts - 305, tz=UTC,
-                    )
-                    window_end_dt = datetime.fromtimestamp(
-                        window_close_ts + 5, tz=UTC,
-                    )
-                    row = await conn.fetchrow(
-                        "SELECT spot_price "
-                        "FROM market_data.paper_ticks "
-                        "WHERE condition_id = $1 "
-                        "  AND ts BETWEEN $2 AND $3 "
-                        "  AND spot_price IS NOT NULL AND spot_price > 0 "
-                        "ORDER BY ts ASC LIMIT 1",
-                        condition_id, window_start_dt, window_end_dt,
-                    )
-                else:
-                    row = await conn.fetchrow(
-                        "SELECT spot_price "
-                        "FROM market_data.paper_ticks "
-                        "WHERE condition_id = $1 "
-                        "  AND spot_price IS NOT NULL AND spot_price > 0 "
-                        "ORDER BY t_in_window ASC, ts ASC LIMIT 1",
-                        condition_id,
-                    )
+                row = await conn.fetchrow(
+                    "SELECT spot_price "
+                    "FROM market_data.paper_ticks "
+                    "WHERE condition_id = $1 "
+                    "  AND ts BETWEEN $2 AND $3 "
+                    "  AND spot_price IS NOT NULL AND spot_price > 0 "
+                    "ORDER BY ts ASC LIMIT 1",
+                    condition_id, window_start_dt, window_end_dt,
+                )
         except Exception as e:
             log.warning("paper.driver.settle.first_tick_err", err=str(e))
             return None, "first_tick_err"

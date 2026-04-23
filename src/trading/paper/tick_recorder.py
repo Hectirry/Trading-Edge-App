@@ -64,11 +64,23 @@ class TickRecorder:
                 book = books.get(m.condition_id)
                 if not book:
                     continue
-                # Capture open_price at first tick past window_open.
+                # Capture open_price at first tick within 5 s of window_open.
+                # If we miss the window (process restart, late discovery,
+                # feed interruption), DO NOT retrofit from a mid-window
+                # Chainlink reading — that creates a false "open" that
+                # flips went_up in the settle watchdog. Leave open_price
+                # at 0 and let the watchdog's ohlcv fallback handle it.
                 window_open = m.window_close_ts - 300
-                if not m.open_price_captured and now >= window_open:
-                    # Prefer Chainlink for open_price (matches settlement).
-                    m.open_price = feed_snapshot["chainlink"] or feed_snapshot["spot"]
+                t_in_win = max(0.0, now - window_open)
+                if (
+                    not m.open_price_captured
+                    and now >= window_open
+                    and t_in_win <= 5.0
+                ):
+                    # Prefer spot (continuous Binance 1Hz) for the open
+                    # snapshot; Chainlink freezes too often on Polygon
+                    # EAC to be trusted as the window-open reference.
+                    m.open_price = feed_snapshot["spot"] or feed_snapshot["chainlink"]
                     m.open_price_captured = True
 
                 t_in_window = max(0.0, now - window_open)
