@@ -397,6 +397,7 @@ class PaperDriver:
         settle_price: float,
         went_up: bool,
         source: str,
+        fresh_open_price: float | None = None,
     ) -> None:
         pos = self._open_positions.pop(slug, None)
         if pos is None:
@@ -415,7 +416,8 @@ class PaperDriver:
             slug=slug,
             source=source,
             settle_price=settle_price,
-            open_price=pos.open_price,
+            open_price=fresh_open_price if fresh_open_price is not None else pos.open_price,
+            pos_open_price=pos.open_price,
             went_up=went_up,
             pnl=pnl,
         )
@@ -507,6 +509,7 @@ class PaperDriver:
             settle_price=settle_price,
             went_up=went_up,
             source=source,
+            fresh_open_price=open_price,
         )
 
     async def _last_paper_tick_price(
