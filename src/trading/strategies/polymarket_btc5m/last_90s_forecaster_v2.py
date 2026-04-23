@@ -11,7 +11,7 @@ but emits SKIP ``shadow_mode`` instead of ENTER.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 from trading.common.logging import get_logger
 from trading.engine.features import macro as macro_feat
@@ -179,31 +179,26 @@ class Last90sForecasterV2(StrategyBase):
         )
 
 
-def load_runner_from_registry(
+async def load_runner_async(
     name: str = "last_90s_forecaster_v2",
 ) -> ModelRunner | None:
-    """Return a runner for the active model row, or None if none active.
-
-    Synchronous helper; the caller is expected to run it via
-    ``asyncio.run()`` at strategy bootstrap time (we do this because the
-    model file lives on disk and we want to fail fast at boot rather
-    than per-tick).
+    """Async-native variant for callers that live inside an event loop
+    (e.g. the paper engine's main_async bootstrap).
     """
-    import asyncio
+    from trading.common.db import acquire
 
-    async def _fetch() -> dict[str, Any] | None:
-        from trading.common.db import acquire
-
+    try:
         async with acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT path FROM research.models "
                 "WHERE name = $1 AND is_active = TRUE",
                 name,
             )
-        return dict(row) if row else None
-
-    row = asyncio.run(_fetch())
+    except Exception as e:
+        log.warning("v2.model_lookup_err", err=str(e))
+        return None
     if row is None:
+        log.info("v2.no_active_model_row", name=name)
         return None
     path = Path(row["path"])
     model_file = path / "model.lgb"
@@ -211,4 +206,17 @@ def load_runner_from_registry(
     if not model_file.exists():
         log.error("v2.model_file_missing", path=str(model_file))
         return None
-    return LGBRunner(model_file, calibrator_path=calibrator_file)
+    try:
+        return LGBRunner(model_file, calibrator_path=calibrator_file)
+    except Exception as e:
+        log.error("v2.model_load_err", err=str(e), path=str(model_file))
+        return None
+
+
+def load_runner_from_registry(
+    name: str = "last_90s_forecaster_v2",
+) -> ModelRunner | None:
+    """Synchronous wrapper for CLI / scripts run outside an event loop."""
+    import asyncio
+
+    return asyncio.run(load_runner_async(name))

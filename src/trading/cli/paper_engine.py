@@ -37,7 +37,7 @@ from trading.paper.tick_recorder import TickRecorder
 log = get_logger("cli.paper_engine")
 
 
-def _load_strategy(name: str, cfg: dict) -> StrategyBase:
+async def _load_strategy(name: str, cfg: dict, macro_provider=None) -> StrategyBase:
     if name == "imbalance_v3":
         from trading.strategies.polymarket_btc5m.imbalance_v3 import ImbalanceV3
 
@@ -46,6 +46,20 @@ def _load_strategy(name: str, cfg: dict) -> StrategyBase:
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import TrendConfirmT1V1
 
         return TrendConfirmT1V1(config=cfg)
+    if name == "last_90s_forecaster_v1":
+        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v1 import (
+            Last90sForecasterV1,
+        )
+
+        return Last90sForecasterV1(cfg, macro_provider=macro_provider)
+    if name == "last_90s_forecaster_v2":
+        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v2 import (
+            Last90sForecasterV2,
+            load_runner_async,
+        )
+
+        runner = await load_runner_async()
+        return Last90sForecasterV2(cfg, macro_provider=macro_provider, model=runner)
     raise RuntimeError(f"unknown strategy: {name}")
 
 
@@ -85,6 +99,21 @@ async def main_async() -> None:
     )
     tg = T.TelegramClient()
 
+    # Shared macro provider for last_90s_forecaster_v1/_v2.
+    from trading.strategies.polymarket_btc5m._macro_provider import (
+        PostgresMacroProvider,
+    )
+
+    macro_provider = PostgresMacroProvider()
+    try:
+        await macro_provider.refresh(hours=6)
+        log.info(
+            "paper_engine.macro_provider.ready",
+            n_candles=len(macro_provider._cache),
+        )
+    except Exception as e:
+        log.warning("paper_engine.macro_provider.refresh_err", err=str(e))
+
     # Per-strategy drivers.
     drivers: list[PaperDriver] = []
     strategies_cfg = staging_cfg.get("strategies", {})
@@ -93,7 +122,7 @@ async def main_async() -> None:
             log.info("paper_engine.strategy.disabled", name=name)
             continue
         strategy_cfg = tomli.loads(Path(entry["params_file"]).read_text())
-        strategy = _load_strategy(name, strategy_cfg)
+        strategy = await _load_strategy(name, strategy_cfg, macro_provider=macro_provider)
         risk = RiskManager({"risk": strategy_cfg["risk"]})
         fill_params = FillParams(
             fee_k=0.05,
