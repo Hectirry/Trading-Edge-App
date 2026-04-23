@@ -90,6 +90,7 @@ class PaperDriver:
     async def run(self) -> None:
         self._redis = redis.from_url(self.redis_url, decode_responses=False)
         await self._rehydrate_pause_state()
+        await self._rehydrate_trade_taken()
         self.strategy.on_start()
         log.info(
             "paper.driver.started",
@@ -100,34 +101,88 @@ class PaperDriver:
         kill_switch_task = asyncio.create_task(self._kill_switch_loop())
         eval_summary_task = asyncio.create_task(self._eval_summary_loop())
         settle_watchdog_task = asyncio.create_task(self._settle_watchdog_loop())
+        # Wrap the pubsub listen in a retry loop so a Redis hiccup
+        # doesn't silently kill the driver. Exponential backoff, capped
+        # at 30 s. Exit only on task cancellation.
+        backoff = 1.0
         try:
-            async with self._redis.pubsub() as pubsub:
-                await pubsub.subscribe(REDIS_CHANNEL, self._control_channel)
-                async for msg in pubsub.listen():
-                    if msg is None or msg.get("type") != "message":
-                        continue
-                    channel = (
-                        msg["channel"].decode()
-                        if isinstance(msg["channel"], bytes | bytearray)
-                        else msg["channel"]
+            while True:
+                try:
+                    async with self._redis.pubsub() as pubsub:
+                        await pubsub.subscribe(
+                            REDIS_CHANNEL, self._control_channel,
+                        )
+                        backoff = 1.0  # reset on successful subscribe
+                        async for msg in pubsub.listen():
+                            if msg is None or msg.get("type") != "message":
+                                continue
+                            channel = (
+                                msg["channel"].decode()
+                                if isinstance(msg["channel"], bytes | bytearray)
+                                else msg["channel"]
+                            )
+                            if channel == self._control_channel:
+                                self._handle_control_message(msg["data"])
+                                continue
+                            try:
+                                tick_dict = json.loads(msg["data"])
+                            except Exception:
+                                continue
+                            try:
+                                await self._handle_tick(tick_dict)
+                            except Exception as e:
+                                log.exception(
+                                    "paper.driver.handle_tick.err", err=str(e),
+                                )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.error(
+                        "paper.driver.pubsub.disconnected",
+                        err=str(e), backoff_s=backoff,
                     )
-                    if channel == self._control_channel:
-                        self._handle_control_message(msg["data"])
-                        continue
-                    try:
-                        tick_dict = json.loads(msg["data"])
-                    except Exception:
-                        continue
-                    try:
-                        await self._handle_tick(tick_dict)
-                    except Exception as e:
-                        log.exception("paper.driver.handle_tick.err", err=str(e))
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 30.0)
+                    log.info("paper.driver.pubsub.reconnecting")
         finally:
             reconciliation_task.cancel()
             kill_switch_task.cancel()
             eval_summary_task.cancel()
             settle_watchdog_task.cancel()
             self.strategy.on_stop()
+
+    async def _rehydrate_trade_taken(self) -> None:
+        """Rehydrate the ``_trade_taken`` set from recent paper orders.
+
+        Prevents a double-fill on the same market after an engine
+        restart mid-window: without this, the in-memory set is empty at
+        boot and the strategy would re-ENTER any market that still has
+        time left in its entry window.
+        """
+        try:
+            async with acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT DISTINCT "
+                    "  regexp_replace(instrument_id, '-(YES|NO)\\.POLYMARKET$', '') "
+                    "    AS slug "
+                    "FROM trading.orders "
+                    "WHERE mode = 'paper' "
+                    "  AND strategy_id = $1 "
+                    "  AND ts_submit > now() - interval '10 minutes'",
+                    self.strategy.name,
+                )
+        except Exception as e:
+            log.warning("paper.driver.rehydrate_trade_taken_err", err=str(e))
+            return
+        for r in rows:
+            slug = r["slug"]
+            if slug:
+                self._trade_taken.add(slug)
+        if rows:
+            log.info(
+                "paper.driver.rehydrated_trade_taken",
+                strategy=self.strategy.name, n_slugs=len(rows),
+            )
 
     async def _rehydrate_pause_state(self) -> None:
         try:
@@ -321,26 +376,18 @@ class PaperDriver:
     async def _settle_position(self, slug: str, ctx: TickContext) -> None:
         """Settle driven by an incoming tick past t_in_window=300.
 
-        Kept for the happy path when the recorder is still publishing at
-        the moment the window closes. Most settles now come through the
-        watchdog (see ``_settle_watchdog_loop``) because ticks usually
-        stop before ``t_in_window`` reaches 300.
+        Delegates to the watchdog's spot-based math so both code paths
+        (in-tick settle and out-of-band watchdog settle) agree on what
+        "open" and "close" mean. ctx.open_price is NOT used here — it's
+        the frozen value captured by the recorder at entry time and can
+        drift from the true window-open spot after Chainlink updates.
         """
         pos = self._open_positions.get(slug)
         if pos is None:
             return
-        settle_price = ctx.chainlink_price or ctx.spot_price
-        if settle_price <= 0:
-            log.error("paper.driver.settle_no_price", slug=slug)
-            return
-        went_up = settle_price > ctx.open_price
-        await self._settle_from_values(
-            slug,
-            settle_ts=ctx.ts,
-            settle_price=settle_price,
-            went_up=went_up,
-            source="tick",
-        )
+        import time as _time
+
+        await self._settle_via_watchdog(slug, pos, now=_time.time())
 
     async def _settle_from_values(
         self,
