@@ -96,14 +96,18 @@ class Watcher:
                 fired_for_week_pvb = iso_week
                 log.info("watcher.weekly_comparison.firing", week=iso_week)
                 proc = await asyncio.create_subprocess_exec(
-                    "python", "-m", "trading.cli.paper_vs_backtest",
+                    "python",
+                    "-m",
+                    "trading.cli.paper_vs_backtest",
                 )
                 await proc.wait()
             if now.weekday() == 6 and now.hour == 12 and fired_for_week_ab != iso_week:
                 fired_for_week_ab = iso_week
                 log.info("watcher.contest_ab.firing", week=iso_week)
                 proc = await asyncio.create_subprocess_exec(
-                    "python", "-m", "trading.cli.contest_ab_weekly",
+                    "python",
+                    "-m",
+                    "trading.cli.contest_ab_weekly",
                 )
                 await proc.wait()
             await asyncio.sleep(60)
@@ -142,10 +146,15 @@ class Watcher:
                     if i > 0:
                         await asyncio.sleep(60)
                     argv = [
-                        "python", "-m", "trading.cli.walk_forward",
-                        "--strategy", strategy,
-                        "--from", t_from.date().isoformat(),
-                        "--to", t_to.date().isoformat(),
+                        "python",
+                        "-m",
+                        "trading.cli.walk_forward",
+                        "--strategy",
+                        strategy,
+                        "--from",
+                        t_from.date().isoformat(),
+                        "--to",
+                        t_to.date().isoformat(),
                     ]
                     log.info("watcher.wf.launch", strategy=strategy)
                     try:
@@ -153,7 +162,9 @@ class Watcher:
                         await proc.wait()
                     except Exception as e:
                         log.warning(
-                            "watcher.wf.err", strategy=strategy, err=str(e),
+                            "watcher.wf.err",
+                            strategy=strategy,
+                            err=str(e),
                         )
             await asyncio.sleep(60)
 

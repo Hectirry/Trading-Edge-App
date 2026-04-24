@@ -62,7 +62,9 @@ class FixedMacroProvider:
         lows = [c.low for c in window]
         closes = [c.close for c in window]
         return snapshot(
-            highs, lows, closes,
+            highs,
+            lows,
+            closes,
             adx_threshold=self.adx_threshold,
             consecutive_min=self.consecutive_min,
         )
@@ -112,8 +114,12 @@ class PostgresMacroProvider:
                 since,
             )
         self._cache = [
-            Candle(ts=r["ts"].timestamp(), high=float(r["high"]),
-                   low=float(r["low"]), close=float(r["close"]))
+            Candle(
+                ts=r["ts"].timestamp(),
+                high=float(r["high"]),
+                low=float(r["low"]),
+                close=float(r["close"]),
+            )
             for r in rows
         ]
 

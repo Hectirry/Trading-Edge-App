@@ -122,26 +122,29 @@ def _load_resolved_markets(sqlite_path: Path, slug_encodes_open_ts: bool) -> lis
             if tick_open is None or tick_close is None:
                 continue
             open_price = float(tick_open["open_price"])
-            close_price = float(
-                tick_close["chainlink_price"] or tick_close["spot_price"] or 0
-            )
+            close_price = float(tick_close["chainlink_price"] or tick_close["spot_price"] or 0)
             if open_price <= 0 or close_price <= 0:
                 continue
-            out.append({
-                "slug": slug,
-                "condition_id": slug,  # polybot-agent doesn't store condition_id per market
-                "open_ts": open_ts,
-                "close_ts": close_ts,
-                "open_price": open_price,
-                "close_price": close_price,
-            })
+            out.append(
+                {
+                    "slug": slug,
+                    "condition_id": slug,  # polybot-agent doesn't store condition_id per market
+                    "open_ts": open_ts,
+                    "close_ts": close_ts,
+                    "open_price": open_price,
+                    "close_price": close_price,
+                }
+            )
         return out
     finally:
         con.close()
 
 
 def _load_ticks_for_slug(
-    sqlite_path: Path, slug: str, open_ts: float, cutoff_ts: float,
+    sqlite_path: Path,
+    slug: str,
+    open_ts: float,
+    cutoff_ts: float,
 ) -> list[float]:
     """Read 1 Hz BTC spot ticks for one market from polybot's ``ticks``
     table, up to (and including) ``cutoff_ts``. Returns samples ordered
@@ -165,7 +168,9 @@ def _load_ticks_for_slug(
 
 
 def _load_ohlcv_5m(
-    pg_dsn: str, since_ts: int, until_ts: int,
+    pg_dsn: str,
+    since_ts: int,
+    until_ts: int,
 ) -> list[tuple[float, float, float, float]]:
     """(ts, high, low, close) tuples for macro features."""
     import psycopg2
@@ -181,9 +186,7 @@ def _load_ohlcv_5m(
                 "ORDER BY ts ASC",
                 (since_ts, until_ts),
             )
-            return [
-                (float(t), float(h), float(lo), float(c)) for (t, h, lo, c) in cur.fetchall()
-            ]
+            return [(float(t), float(h), float(lo), float(c)) for (t, h, lo, c) in cur.fetchall()]
     finally:
         conn.close()
 
@@ -239,16 +242,24 @@ def build_samples(
             # Polymarket book snapshot unreliable historically → neutral
             # defaults. Model learns from micro + macro + time features.
             implied_prob_yes=0.5,
-            yes_ask=0.5, no_ask=0.5,
-            depth_yes=100.0, depth_no=100.0,
-            pm_imbalance=0.0, pm_spread_bps=50.0,
+            yes_ask=0.5,
+            no_ask=0.5,
+            depth_yes=100.0,
+            depth_no=100.0,
+            pm_imbalance=0.0,
+            pm_spread_bps=50.0,
         )
         vec = build_vector(inp)
         label = 1 if float(m["close_price"]) > float(m["open_price"]) else 0
-        samples.append(Sample(
-            open_ts=float(open_ts), close_ts=float(close_ts),
-            slug=str(m["slug"]), features=vec, label=label,
-        ))
+        samples.append(
+            Sample(
+                open_ts=float(open_ts),
+                close_ts=float(close_ts),
+                slug=str(m["slug"]),
+                features=vec,
+                label=label,
+            )
+        )
     return samples
 
 
@@ -314,7 +325,10 @@ def train(
         d_train = lgb.Dataset(X_train, y_train)
         d_val = lgb.Dataset(X_val, y_val, reference=d_train)
         model = lgb.train(
-            params, d_train, num_boost_round=2000, valid_sets=[d_val],
+            params,
+            d_train,
+            num_boost_round=2000,
+            valid_sets=[d_val],
             callbacks=[lgb.early_stopping(50, verbose=False)],
         )
         trial.set_user_attr("n_iter", model.best_iteration)
@@ -327,13 +341,16 @@ def train(
     # Refit best on train+val for final booster.
     final_params = {
         **best.params,
-        "objective": "binary", "metric": "binary_logloss",
-        "verbose": -1, "seed": random_state,
+        "objective": "binary",
+        "metric": "binary_logloss",
+        "verbose": -1,
+        "seed": random_state,
     }
     X_tv = np.vstack([X_train, X_val])
     y_tv = np.concatenate([y_train, y_val])
     final = lgb.train(
-        final_params, lgb.Dataset(X_tv, y_tv),
+        final_params,
+        lgb.Dataset(X_tv, y_tv),
         num_boost_round=best.user_attrs.get("n_iter", 200),
     )
     test_probs = final.predict(X_test)
@@ -357,7 +374,9 @@ def train(
             "test_brier": test_brier,
             "ece_val": ece_val,
             "calibrated": calibrator is not None,
-            "n_train": n_train, "n_val": n_val, "n_test": len(X_test),
+            "n_train": n_train,
+            "n_val": n_val,
+            "n_test": len(X_test),
             "best_params": best.params,
             "n_iterations": int(best.user_attrs.get("n_iter", 0)),
         },
@@ -369,10 +388,15 @@ def train(
 
 def _git_sha() -> str:
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[3],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=Path(__file__).resolve().parents[3],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return "unknown"
 
@@ -418,10 +442,12 @@ def write_artefacts(
     meta = {
         "name": name,
         "version": version,
-        "feature_names": list(__import__(
-            "trading.strategies.polymarket_btc5m._v2_features",
-            fromlist=["FEATURE_NAMES"],
-        ).FEATURE_NAMES),
+        "feature_names": list(
+            __import__(
+                "trading.strategies.polymarket_btc5m._v2_features",
+                fromlist=["FEATURE_NAMES"],
+            ).FEATURE_NAMES
+        ),
         "metrics": trained["metrics"],
         "training_period_from": training_period_from.isoformat(),
         "training_period_to": training_period_to.isoformat(),
@@ -451,18 +477,25 @@ def write_artefacts(
                 VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb,
                         $7, $8, $9, now(), $10)
                 """,
-                uuid.uuid4(), name, version, str(out_dir),
+                uuid.uuid4(),
+                name,
+                version,
+                str(out_dir),
                 json.dumps(trained["metrics"]),
                 json.dumps(trained["metrics"].get("best_params", {})),
-                training_period_from, training_period_to,
-                meta["git_sha"], is_active,
+                training_period_from,
+                training_period_to,
+                meta["git_sha"],
+                is_active,
             )
         await close_pool()
 
     asyncio.run(_upsert())
     return {
-        "version": version, "path": str(out_dir),
-        "passes_gate": passes, "is_active": is_active,
+        "version": version,
+        "path": str(out_dir),
+        "passes_gate": passes,
+        "is_active": is_active,
         "metrics": trained["metrics"],
     }
 
@@ -491,6 +524,7 @@ def main() -> int:
     import tempfile
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="tea_train_"))
+
     def _snapshot(src: str) -> str:
         p = Path(src)
         if not p.exists():
@@ -503,7 +537,9 @@ def main() -> int:
     polybot_agent_snap = _snapshot(args.polybot_agent)
     log.info(
         "snapshotted sqlites to %s: btc5m=%s agent=%s",
-        tmp_dir, polybot_btc5m_snap, polybot_agent_snap,
+        tmp_dir,
+        polybot_btc5m_snap,
+        polybot_agent_snap,
     )
 
     log.info("loading resolved markets")
@@ -514,12 +550,13 @@ def main() -> int:
     for m in mb:
         m["_source"] = polybot_agent_snap
     markets = [
-        m for m in (ma + mb)
-        if t_from.timestamp() <= float(m["close_ts"]) <= t_to.timestamp()
+        m for m in (ma + mb) if t_from.timestamp() <= float(m["close_ts"]) <= t_to.timestamp()
     ]
     log.info(
         "resolved markets: %d (polybot-btc5m=%d polybot-agent=%d)",
-        len(markets), len(ma), len(mb),
+        len(markets),
+        len(ma),
+        len(mb),
     )
     if len(markets) < 100:
         log.error("too few markets (%d) — need ≥ 100 for training", len(markets))
@@ -540,7 +577,8 @@ def main() -> int:
     log.info("ohlcv 5m rows: %d", len(candles))
 
     sqlite_sources = [
-        Path(args.polybot_btc5m), Path(args.polybot_agent),
+        Path(args.polybot_btc5m),
+        Path(args.polybot_agent),
     ]
     samples = build_samples(
         markets,
@@ -553,8 +591,7 @@ def main() -> int:
         return 3
 
     log.info("training — optuna_trials=%d budget_s=%d", args.optuna_trials, args.time_budget_s)
-    trained = train(samples, optuna_trials=args.optuna_trials,
-                    time_budget_s=args.time_budget_s)
+    trained = train(samples, optuna_trials=args.optuna_trials, time_budget_s=args.time_budget_s)
     log.info("metrics: %s", json.dumps(trained["metrics"]))
 
     out = write_artefacts(

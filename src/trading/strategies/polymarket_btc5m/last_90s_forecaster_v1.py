@@ -59,7 +59,8 @@ class Last90sForecasterV1(StrategyBase):
             )
 
         spots = [
-            t.spot_price for t in ctx.recent_ticks
+            t.spot_price
+            for t in ctx.recent_ticks
             if hasattr(t, "ts") and (ctx.ts - t.ts) <= 90.0 and t.spot_price > 0
         ]
         spots.append(ctx.spot_price)
@@ -89,9 +90,12 @@ class Last90sForecasterV1(StrategyBase):
         # Re-classify regime with this strategy's thresholds (the provider
         # might have been configured with different defaults).
         regime = macro_feat.classify_regime(
-            macro_snap.ema8, macro_snap.ema34,
-            macro_snap.adx_14, macro_snap.consecutive_same_dir,
-            adx_threshold=adx_threshold, consecutive_min=consecutive_min,
+            macro_snap.ema8,
+            macro_snap.ema34,
+            macro_snap.adx_14,
+            macro_snap.consecutive_same_dir,
+            adx_threshold=adx_threshold,
+            consecutive_min=consecutive_min,
         )
 
         micro_prob = 0.5 + _clamp(m90 / divisor, -0.45, 0.45)
@@ -116,27 +120,31 @@ class Last90sForecasterV1(StrategyBase):
 
         if ctx.pm_spread_bps > spread_max:
             return Decision(
-                action=Action.SKIP, reason="spread_too_wide",
+                action=Action.SKIP,
+                reason="spread_too_wide",
                 signal_features=features,
                 signal_breakdown={"pm_spread_bps": ctx.pm_spread_bps, "max": spread_max},
             )
 
         if regime == "uptrend" and micro_prob <= 0.5:
             return Decision(
-                action=Action.SKIP, reason="macro_contradicts_micro",
+                action=Action.SKIP,
+                reason="macro_contradicts_micro",
                 signal_features=features,
                 signal_breakdown={"regime": regime, "micro_prob": micro_prob},
             )
         if regime == "downtrend" and micro_prob >= 0.5:
             return Decision(
-                action=Action.SKIP, reason="macro_contradicts_micro",
+                action=Action.SKIP,
+                reason="macro_contradicts_micro",
                 signal_features=features,
                 signal_breakdown={"regime": regime, "micro_prob": micro_prob},
             )
 
         if abs(edge) < edge_threshold:
             return Decision(
-                action=Action.SKIP, reason="edge_below_threshold",
+                action=Action.SKIP,
+                reason="edge_below_threshold",
                 signal_features=features,
                 signal_breakdown={"edge": edge, "threshold": edge_threshold},
             )

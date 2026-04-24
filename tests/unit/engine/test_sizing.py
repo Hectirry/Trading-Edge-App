@@ -29,23 +29,27 @@ def test_kelly_fraction_guards_entry_price_out_of_range() -> None:
 
 
 def test_stake_uses_floor_until_min_trades_met() -> None:
-    cfg = KellyConfig(stake_min_usd=5.0, stake_max_usd=15.0,
-                      kelly_fraction=0.25, min_trades=20)
+    cfg = KellyConfig(stake_min_usd=5.0, stake_max_usd=15.0, kelly_fraction=0.25, min_trades=20)
     # Before 20 trades, even a huge edge returns the floor stake.
     s = stake_for_trade(
-        p_win=0.80, entry_price=0.40,
-        capital_usd=1000.0, n_settled_trades=5, cfg=cfg,
+        p_win=0.80,
+        entry_price=0.40,
+        capital_usd=1000.0,
+        n_settled_trades=5,
+        cfg=cfg,
     )
     assert s == 5.0
 
 
 def test_stake_applies_kelly_after_min_trades_met() -> None:
-    cfg = KellyConfig(stake_min_usd=5.0, stake_max_usd=15.0,
-                      kelly_fraction=0.25, min_trades=20)
+    cfg = KellyConfig(stake_min_usd=5.0, stake_max_usd=15.0, kelly_fraction=0.25, min_trades=20)
     # 20th+ trade, strong edge → Kelly bump, capped at 15.
     s = stake_for_trade(
-        p_win=0.80, entry_price=0.40,
-        capital_usd=1000.0, n_settled_trades=25, cfg=cfg,
+        p_win=0.80,
+        entry_price=0.40,
+        capital_usd=1000.0,
+        n_settled_trades=25,
+        cfg=cfg,
     )
     # raw = 1000 * 0.25 * Kelly(0.8, 0.4); Kelly(0.8, 0.4) = (b*p - (1-p)) / b
     # b = 0.6/0.4 = 1.5; (1.5*0.8 - 0.2)/1.5 = (1.2 - 0.2)/1.5 = 0.667
@@ -54,12 +58,14 @@ def test_stake_applies_kelly_after_min_trades_met() -> None:
 
 
 def test_stake_clamped_to_floor_when_kelly_is_small() -> None:
-    cfg = KellyConfig(stake_min_usd=5.0, stake_max_usd=15.0,
-                      kelly_fraction=0.25, min_trades=20)
+    cfg = KellyConfig(stake_min_usd=5.0, stake_max_usd=15.0, kelly_fraction=0.25, min_trades=20)
     # Tiny edge → Kelly tiny → raw < stake_min → clamp to min.
     s = stake_for_trade(
-        p_win=0.51, entry_price=0.50,
-        capital_usd=1000.0, n_settled_trades=25, cfg=cfg,
+        p_win=0.51,
+        entry_price=0.50,
+        capital_usd=1000.0,
+        n_settled_trades=25,
+        cfg=cfg,
     )
     assert s == pytest.approx(5.0, abs=1e-9)
 
@@ -67,7 +73,10 @@ def test_stake_clamped_to_floor_when_kelly_is_small() -> None:
 def test_stake_zero_edge_still_returns_floor_not_zero() -> None:
     cfg = KellyConfig()
     s = stake_for_trade(
-        p_win=0.50, entry_price=0.50,
-        capital_usd=1000.0, n_settled_trades=25, cfg=cfg,
+        p_win=0.50,
+        entry_price=0.50,
+        capital_usd=1000.0,
+        n_settled_trades=25,
+        cfg=cfg,
     )
     assert s == cfg.stake_min_usd

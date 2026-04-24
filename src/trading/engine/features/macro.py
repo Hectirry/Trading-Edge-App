@@ -141,8 +141,12 @@ def snapshot(
     adx_val = adx_14(highs, lows, closes)
     consec = consecutive_same_direction(closes)
     regime = classify_regime(
-        ema_fast, ema_slow, adx_val, consec,
-        adx_threshold=adx_threshold, consecutive_min=consecutive_min,
+        ema_fast,
+        ema_slow,
+        adx_val,
+        consec,
+        adx_threshold=adx_threshold,
+        consecutive_min=consecutive_min,
     )
     pct = 0.0 if ema_slow == 0 else (ema_fast - ema_slow) / ema_slow * 100.0
     return MacroSnapshot(

@@ -56,8 +56,7 @@ def _ctx(
         # exactly, so momentum_bps(_, 90) ≈ 100 and micro_prob saturates at 0.95.
         spots = [70_000.0 * (1.0 + 0.01 * i / 89.0) for i in range(90)]
     recent = [
-        _RecentTick(ts=now - (len(spots) - i), spot_price=spots[i])
-        for i in range(len(spots))
+        _RecentTick(ts=now - (len(spots) - i), spot_price=spots[i]) for i in range(len(spots))
     ]
     spot_now = spots[-1]
     return TickContext(
@@ -68,12 +67,19 @@ def _ctx(
         spot_price=spot_now,
         chainlink_price=spot_now,
         open_price=spots[0],
-        pm_yes_bid=0.47, pm_yes_ask=0.48, pm_no_bid=0.52, pm_no_ask=0.53,
-        pm_depth_yes=100.0, pm_depth_no=100.0,
+        pm_yes_bid=0.47,
+        pm_yes_ask=0.48,
+        pm_no_bid=0.52,
+        pm_no_ask=0.53,
+        pm_depth_yes=100.0,
+        pm_depth_no=100.0,
         pm_imbalance=0.0,
         pm_spread_bps=spread_bps,
         implied_prob_yes=implied,
-        model_prob_yes=0.5, edge=0.0, z_score=0.0, vol_regime="normal",
+        model_prob_yes=0.5,
+        edge=0.0,
+        z_score=0.0,
+        vol_regime="normal",
         recent_ticks=recent,
     )
 
@@ -105,9 +111,7 @@ def test_skip_outside_entry_window_after() -> None:
 
 
 def test_skip_insufficient_micro_data() -> None:
-    d = _strat(macro=_StubMacro(_macro())).should_enter(
-        _ctx(spots=[70_000.0] * 30)
-    )
+    d = _strat(macro=_StubMacro(_macro())).should_enter(_ctx(spots=[70_000.0] * 30))
     assert d.action is Action.SKIP
     assert d.reason == "insufficient_micro_data"
 
@@ -135,8 +139,12 @@ def test_skip_macro_contradicts_micro_uptrend_falling() -> None:
 def test_skip_macro_contradicts_micro_downtrend_rising() -> None:
     # Macro downtrend + micro up.
     macro = MacroSnapshot(
-        ema8=90.0, ema34=100.0, adx_14=25.0,
-        consecutive_same_dir=-3, regime="downtrend", ema8_vs_ema34_pct=-10.0,
+        ema8=90.0,
+        ema34=100.0,
+        adx_14=25.0,
+        consecutive_same_dir=-3,
+        regime="downtrend",
+        ema8_vs_ema34_pct=-10.0,
     )
     d = _strat(macro=_StubMacro(macro)).should_enter(_ctx())  # spots rising
     assert d.action is Action.SKIP
@@ -161,12 +169,14 @@ def test_enter_yes_down_when_edge_negative() -> None:
     # Falling micro + downtrend macro → negative edge.
     spots = [70_000.0 * (1.0 - 0.01 * i / 89.0) for i in range(90)]
     macro = MacroSnapshot(
-        ema8=90.0, ema34=100.0, adx_14=25.0,
-        consecutive_same_dir=-3, regime="downtrend", ema8_vs_ema34_pct=-10.0,
+        ema8=90.0,
+        ema34=100.0,
+        adx_14=25.0,
+        consecutive_same_dir=-3,
+        regime="downtrend",
+        ema8_vs_ema34_pct=-10.0,
     )
-    d = _strat(macro=_StubMacro(macro)).should_enter(
-        _ctx(spots=spots, implied=0.60)
-    )
+    d = _strat(macro=_StubMacro(macro)).should_enter(_ctx(spots=spots, implied=0.60))
     assert d.action is Action.ENTER
     assert d.side is Side.YES_DOWN
     assert d.signal_features["edge"] < 0
@@ -175,8 +185,12 @@ def test_enter_yes_down_when_edge_negative() -> None:
 def test_range_regime_allows_both_sides() -> None:
     # Weak ADX → regime classifier returns "range" → agreement = True.
     macro = MacroSnapshot(
-        ema8=100.0, ema34=100.0, adx_14=5.0,
-        consecutive_same_dir=1, regime="range", ema8_vs_ema34_pct=0.0,
+        ema8=100.0,
+        ema34=100.0,
+        adx_14=5.0,
+        consecutive_same_dir=1,
+        regime="range",
+        ema8_vs_ema34_pct=0.0,
     )
     d = _strat(macro=_StubMacro(macro)).should_enter(_ctx(implied=0.40))
     assert d.action is Action.ENTER
@@ -184,9 +198,22 @@ def test_range_regime_allows_both_sides() -> None:
 
 def test_features_surface_in_decision() -> None:
     d = _strat(macro=_StubMacro(_macro())).should_enter(_ctx(implied=0.40))
-    for k in ("m30_bps", "m60_bps", "m90_bps", "rv_90s", "tick_up_ratio",
-              "micro_prob", "edge", "regime", "ema8", "ema34", "adx_14",
-              "consecutive_same_dir", "implied_prob_yes", "pm_spread_bps"):
+    for k in (
+        "m30_bps",
+        "m60_bps",
+        "m90_bps",
+        "rv_90s",
+        "tick_up_ratio",
+        "micro_prob",
+        "edge",
+        "regime",
+        "ema8",
+        "ema34",
+        "adx_14",
+        "consecutive_same_dir",
+        "implied_prob_yes",
+        "pm_spread_bps",
+    ):
         assert k in d.signal_features, k
 
 

@@ -99,9 +99,7 @@ async def test_backtest_happy_path_queues_job(poller) -> None:
         coro.close()
         return None
 
-    with patch(
-        "trading.bots.telegram.commands.asyncio.create_task", side_effect=_consume
-    ) as spawn:
+    with patch("trading.bots.telegram.commands.asyncio.create_task", side_effect=_consume) as spawn:
         await poller._handle_update(
             _update(
                 111,
@@ -210,9 +208,7 @@ async def test_status_handles_missing_pnl_today(poller) -> None:
 async def test_pnl_defaults_to_today_period(poller) -> None:
     poller._api_get.return_value = (200, {"pnl": 5.5, "n_trades": 2})
     await poller._handle_update(_update(111, 42, "/pnl"))
-    poller._api_get.assert_awaited_once_with(
-        "/api/v1/pnl", params={"period": "today"}
-    )
+    poller._api_get.assert_awaited_once_with("/api/v1/pnl", params={"period": "today"})
     msg = poller._reply.await_args.args[1]
     assert "pnl (today)" in msg
     assert "$5.50" in msg
@@ -223,9 +219,7 @@ async def test_pnl_accepts_semana_and_mes(poller) -> None:
     poller._api_get.return_value = (200, {"pnl": 0.0, "n_trades": 0})
     await poller._handle_update(_update(111, 42, "/pnl semana"))
     await poller._handle_update(_update(111, 42, "/pnl mes"))
-    periods = [
-        call.kwargs["params"]["period"] for call in poller._api_get.await_args_list
-    ]
+    periods = [call.kwargs["params"]["period"] for call in poller._api_get.await_args_list]
     assert periods == ["semana", "mes"]
 
 

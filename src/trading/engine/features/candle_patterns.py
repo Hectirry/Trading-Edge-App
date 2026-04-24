@@ -26,8 +26,8 @@ class Candle:
 @dataclass(frozen=True)
 class PatternSignal:
     name: str
-    direction: int       # -1 = bearish, 0 = neutral, +1 = bullish
-    strength: float      # [0, 1]
+    direction: int  # -1 = bearish, 0 = neutral, +1 = bullish
+    strength: float  # [0, 1]
 
 
 def _body(c: Candle) -> float:
@@ -135,13 +135,15 @@ def detect_5m(candles: Sequence[Candle]) -> list[PatternSignal]:
     out: list[PatternSignal] = []
     cur = candles[-1]
     prev = candles[-2]
-    for sig in (_detect_doji(cur),
-                _detect_engulfing(prev, cur),
-                _detect_hammer(cur),
-                _detect_shooting_star(cur),
-                _detect_morning_star(candles),
-                _detect_evening_star(candles),
-                _detect_advance_block(candles)):
+    for sig in (
+        _detect_doji(cur),
+        _detect_engulfing(prev, cur),
+        _detect_hammer(cur),
+        _detect_shooting_star(cur),
+        _detect_morning_star(candles),
+        _detect_evening_star(candles),
+        _detect_advance_block(candles),
+    ):
         if sig is not None:
             out.append(sig)
     return out

@@ -101,8 +101,7 @@ class ContestAvengersV1(StrategyBase):
         if self.hmm is not None:
             # Build a coarse closes series from recent_ticks spots down-sampled to ~5s.
             spots = [
-                t.spot_price for t in ctx.recent_ticks
-                if hasattr(t, "ts") and t.spot_price > 0
+                t.spot_price for t in ctx.recent_ticks if hasattr(t, "ts") and t.spot_price > 0
             ]
             spots.append(ctx.spot_price)
             sampled = spots[::5] if len(spots) >= 40 else []
@@ -113,7 +112,8 @@ class ContestAvengersV1(StrategyBase):
                     if state.label == "high_vol":
                         self._last_entered_per_market[ctx.market_slug] = True
                         return Decision(
-                            Action.SKIP, reason="high_vol_skip",
+                            Action.SKIP,
+                            reason="high_vol_skip",
                             signal_features={"regime": regime_label},
                         )
                     if state.label == "ranging":
@@ -134,14 +134,9 @@ class ContestAvengersV1(StrategyBase):
 
         # --- Aggregate confidence ---
         # Same-sign check for liquidation component.
-        liq_component = (
-            liq_score if liq_sign == chainlink_sign and chainlink_sign != 0 else 0.0
-        )
+        liq_component = liq_score if liq_sign == chainlink_sign and chainlink_sign != 0 else 0.0
         confidence_mag = (
-            0.50 * chainlink_score
-            + 0.25 * liq_component
-            + 0.15 * hmm_adjustment
-            + 0.10 * ofi_score
+            0.50 * chainlink_score + 0.25 * liq_component + 0.15 * hmm_adjustment + 0.10 * ofi_score
         )
         # Graceful degradation cap (ADR 0012): if Coinalyze OR Chainlink
         # missing, cap confidence at 0.85 so we never emit a full-
@@ -172,11 +167,13 @@ class ContestAvengersV1(StrategyBase):
             if ctx.t_in_window >= CHECKPOINTS[-1] + CHECKPOINT_TOL_S:
                 self._last_entered_per_market[ctx.market_slug] = True
                 return Decision(
-                    Action.SKIP, reason="no_direction_at_last_checkpoint",
+                    Action.SKIP,
+                    reason="no_direction_at_last_checkpoint",
                     signal_features=features,
                 )
             return Decision(
-                Action.SKIP, reason="awaiting_directional_signal",
+                Action.SKIP,
+                reason="awaiting_directional_signal",
                 signal_features=features,
             )
 
@@ -184,11 +181,13 @@ class ContestAvengersV1(StrategyBase):
             if ctx.t_in_window >= CHECKPOINTS[-1] + CHECKPOINT_TOL_S:
                 self._last_entered_per_market[ctx.market_slug] = True
                 return Decision(
-                    Action.SKIP, reason="confidence_below_threshold_final",
+                    Action.SKIP,
+                    reason="confidence_below_threshold_final",
                     signal_features=features,
                 )
             return Decision(
-                Action.SKIP, reason="confidence_below_threshold",
+                Action.SKIP,
+                reason="confidence_below_threshold",
                 signal_features=features,
             )
 
@@ -204,7 +203,6 @@ class ContestAvengersV1(StrategyBase):
                 "direction": direction,
             },
             reason=(
-                f"confidence={confidence_mag:.3f} sign={direction:+d}"
-                f" regime={regime_label}"
+                f"confidence={confidence_mag:.3f} sign={direction:+d}" f" regime={regime_label}"
             ),
         )

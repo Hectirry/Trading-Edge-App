@@ -88,13 +88,17 @@ class Last90sForecasterV2(StrategyBase):
             return Decision(Action.SKIP, reason="outside_entry_window")
 
         spots = [
-            t.spot_price for t in ctx.recent_ticks
+            t.spot_price
+            for t in ctx.recent_ticks
             if hasattr(t, "ts") and (ctx.ts - t.ts) <= 90.0 and t.spot_price > 0
         ]
         spots.append(ctx.spot_price)
         if len(spots) < 60:
-            return Decision(Action.SKIP, reason="insufficient_micro_data",
-                            signal_breakdown={"n_samples": len(spots)})
+            return Decision(
+                Action.SKIP,
+                reason="insufficient_micro_data",
+                signal_breakdown={"n_samples": len(spots)},
+            )
 
         macro_snap = None
         if self.macro is not None:
@@ -103,12 +107,16 @@ class Last90sForecasterV2(StrategyBase):
             return Decision(Action.SKIP, reason="no_macro_snapshot")
 
         regime = macro_feat.classify_regime(
-            macro_snap.ema8, macro_snap.ema34,
-            macro_snap.adx_14, macro_snap.consecutive_same_dir,
-            adx_threshold=adx_threshold, consecutive_min=consecutive_min,
+            macro_snap.ema8,
+            macro_snap.ema34,
+            macro_snap.adx_14,
+            macro_snap.consecutive_same_dir,
+            adx_threshold=adx_threshold,
+            consecutive_min=consecutive_min,
         )
         macro_snap_effective = macro_feat.MacroSnapshot(
-            ema8=macro_snap.ema8, ema34=macro_snap.ema34,
+            ema8=macro_snap.ema8,
+            ema34=macro_snap.ema34,
             adx_14=macro_snap.adx_14,
             consecutive_same_dir=macro_snap.consecutive_same_dir,
             regime=regime,
@@ -120,8 +128,10 @@ class Last90sForecasterV2(StrategyBase):
             spots_last_90s=spots,
             macro_snap=macro_snap_effective,
             implied_prob_yes=ctx.implied_prob_yes,
-            yes_ask=ctx.pm_yes_ask, no_ask=ctx.pm_no_ask,
-            depth_yes=ctx.pm_depth_yes, depth_no=ctx.pm_depth_no,
+            yes_ask=ctx.pm_yes_ask,
+            no_ask=ctx.pm_no_ask,
+            depth_yes=ctx.pm_depth_yes,
+            depth_no=ctx.pm_depth_no,
             pm_imbalance=ctx.pm_imbalance,
             pm_spread_bps=ctx.pm_spread_bps,
         )
@@ -130,7 +140,8 @@ class Last90sForecasterV2(StrategyBase):
         if self.model is None:
             features_dbg = dict(zip(FEATURE_NAMES, vec, strict=True))
             return Decision(
-                Action.SKIP, reason="shadow_mode_no_model",
+                Action.SKIP,
+                reason="shadow_mode_no_model",
                 signal_features=features_dbg,
             )
 
@@ -138,33 +149,30 @@ class Last90sForecasterV2(StrategyBase):
         edge = micro_prob - ctx.implied_prob_yes
 
         features = dict(zip(FEATURE_NAMES, vec, strict=True))
-        features.update({
-            "micro_prob": micro_prob,
-            "edge": edge,
-            "regime": regime,
-            "shadow": shadow,
-        })
+        features.update(
+            {
+                "micro_prob": micro_prob,
+                "edge": edge,
+                "regime": regime,
+                "shadow": shadow,
+            }
+        )
 
         if ctx.pm_spread_bps > spread_max:
-            return Decision(Action.SKIP, reason="spread_too_wide",
-                            signal_features=features)
+            return Decision(Action.SKIP, reason="spread_too_wide", signal_features=features)
 
         if regime == "uptrend" and micro_prob <= 0.5:
-            return Decision(Action.SKIP, reason="macro_contradicts_micro",
-                            signal_features=features)
+            return Decision(Action.SKIP, reason="macro_contradicts_micro", signal_features=features)
         if regime == "downtrend" and micro_prob >= 0.5:
-            return Decision(Action.SKIP, reason="macro_contradicts_micro",
-                            signal_features=features)
+            return Decision(Action.SKIP, reason="macro_contradicts_micro", signal_features=features)
 
         if abs(edge) < edge_threshold:
-            return Decision(Action.SKIP, reason="edge_below_threshold",
-                            signal_features=features)
+            return Decision(Action.SKIP, reason="edge_below_threshold", signal_features=features)
 
         side = Side.YES_UP if edge > 0 else Side.YES_DOWN
 
         if shadow:
-            return Decision(Action.SKIP, reason="shadow_mode",
-                            signal_features=features)
+            return Decision(Action.SKIP, reason="shadow_mode", signal_features=features)
 
         return Decision(
             action=Action.ENTER,
@@ -190,8 +198,7 @@ async def load_runner_async(
     try:
         async with acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT path FROM research.models "
-                "WHERE name = $1 AND is_active = TRUE",
+                "SELECT path FROM research.models " "WHERE name = $1 AND is_active = TRUE",
                 name,
             )
     except Exception as e:

@@ -20,8 +20,11 @@ def _dt(y: int, m: int, d: int) -> datetime:
 
 def test_build_folds_simple() -> None:
     folds = build_folds(
-        t_from=_dt(2026, 1, 1), t_to=_dt(2026, 1, 10),
-        is_days=5, oos_days=1, step_days=1,
+        t_from=_dt(2026, 1, 1),
+        t_to=_dt(2026, 1, 10),
+        is_days=5,
+        oos_days=1,
+        step_days=1,
     )
     # 5d IS + 1d OOS → folds end at 6, 7, 8, 9, 10 → 5 folds
     assert len(folds) == 4  # last fold OOS ends on Jan 10 (inclusive upper bound)
@@ -34,8 +37,11 @@ def test_build_folds_simple() -> None:
 
 def test_build_folds_drops_overrun() -> None:
     folds = build_folds(
-        t_from=_dt(2026, 1, 1), t_to=_dt(2026, 1, 7),
-        is_days=5, oos_days=2, step_days=1,
+        t_from=_dt(2026, 1, 1),
+        t_to=_dt(2026, 1, 7),
+        is_days=5,
+        oos_days=2,
+        step_days=1,
     )
     # Fold 0: IS 1-6, OOS 6-8. 8 > 7 → dropped. No folds.
     assert folds == []
@@ -44,22 +50,27 @@ def test_build_folds_drops_overrun() -> None:
 def test_build_folds_rejects_bad_range() -> None:
     with pytest.raises(ValueError):
         build_folds(
-            t_from=_dt(2026, 1, 10), t_to=_dt(2026, 1, 1),
-            is_days=5, oos_days=1, step_days=1,
+            t_from=_dt(2026, 1, 10),
+            t_to=_dt(2026, 1, 1),
+            is_days=5,
+            oos_days=1,
+            step_days=1,
         )
 
 
 def test_build_folds_rejects_non_positive_days() -> None:
     with pytest.raises(ValueError):
         build_folds(
-            t_from=_dt(2026, 1, 1), t_to=_dt(2026, 1, 10),
-            is_days=0, oos_days=1, step_days=1,
+            t_from=_dt(2026, 1, 1),
+            t_to=_dt(2026, 1, 10),
+            is_days=0,
+            oos_days=1,
+            step_days=1,
         )
 
 
 def test_classify_fold_unvalidated_small_sample() -> None:
-    assert classify_fold(auc_is=0.60, auc_oos=0.60, n_trades_oos=5) \
-        == "unvalidated_small_sample"
+    assert classify_fold(auc_is=0.60, auc_oos=0.60, n_trades_oos=5) == "unvalidated_small_sample"
 
 
 def test_classify_fold_stable() -> None:
@@ -67,8 +78,7 @@ def test_classify_fold_stable() -> None:
 
 
 def test_classify_fold_unstable() -> None:
-    assert classify_fold(auc_is=0.60, auc_oos=0.56, n_trades_oos=50) \
-        == "unstable_aucs"
+    assert classify_fold(auc_is=0.60, auc_oos=0.56, n_trades_oos=50) == "unstable_aucs"
 
 
 def test_classify_fold_drift() -> None:
@@ -77,8 +87,7 @@ def test_classify_fold_drift() -> None:
 
 def test_classify_fold_no_auc_for_rules_strategy() -> None:
     # Rule-based strategies report n_trades but no AUC.
-    assert classify_fold(auc_is=None, auc_oos=None, n_trades_oos=50) \
-        == "no_model_auc"
+    assert classify_fold(auc_is=None, auc_oos=None, n_trades_oos=50) == "no_model_auc"
 
 
 def test_aggregate_verdicts_empty_returns_hold() -> None:

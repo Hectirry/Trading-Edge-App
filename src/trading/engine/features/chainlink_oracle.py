@@ -35,7 +35,7 @@ class ChainlinkSnapshot:
     round_id: int
     answer: float
     updated_at_ts: float
-    source: str           # 'datastreams' | 'eac_polygon'
+    source: str  # 'datastreams' | 'eac_polygon'
 
 
 class ChainlinkWatcher(Protocol):
@@ -117,8 +117,7 @@ class EACProxyClient:
             "id": 1,
             "method": "eth_call",
             "params": [
-                {"to": self.contract_address,
-                 "data": self._LATEST_ROUND_DATA_SELECTOR},
+                {"to": self.contract_address, "data": self._LATEST_ROUND_DATA_SELECTOR},
                 "latest",
             ],
         }
@@ -189,7 +188,9 @@ def chainlink_lag_score(age_s: float, delta_bps: float) -> float:
 
 
 async def fetch_latest_cached(
-    watcher: ChainlinkWatcher, cache: dict, cache_ttl_s: float = 10.0,
+    watcher: ChainlinkWatcher,
+    cache: dict,
+    cache_ttl_s: float = 10.0,
 ) -> ChainlinkSnapshot | None:
     """Cache wrapper so multiple strategies sharing one watcher don't
     hammer the upstream. ``cache`` is a plain dict injected by the

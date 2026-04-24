@@ -85,16 +85,25 @@ def build_vector(inp: V2FeatureInputs) -> list[float]:
     dow_cos = math.cos(2 * math.pi * dow / 7.0)
 
     return [
-        m30, m60, m90, rv, tur,
+        m30,
+        m60,
+        m90,
+        rv,
+        tur,
         inp.macro_snap.ema8_vs_ema34_pct,
         inp.macro_snap.adx_14,
         float(inp.macro_snap.consecutive_same_dir),
-        regime_up, regime_dn, regime_rn,
+        regime_up,
+        regime_dn,
+        regime_rn,
         inp.implied_prob_yes,
         mp,
         mp - inp.implied_prob_yes,
         inp.pm_imbalance,
         inp.pm_spread_bps,
         lm,
-        hour_sin, hour_cos, dow_sin, dow_cos,
+        hour_sin,
+        hour_cos,
+        dow_sin,
+        dow_cos,
     ]

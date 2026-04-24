@@ -53,8 +53,7 @@ async def _load_hmm_detector():
     try:
         async with acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT path FROM research.models "
-                "WHERE name = $1 AND is_active = TRUE",
+                "SELECT path FROM research.models " "WHERE name = $1 AND is_active = TRUE",
                 "hmm_regime_btc5m",
             )
     except Exception as e:
@@ -75,7 +74,9 @@ async def _load_hmm_detector():
 
 
 async def _shared_providers_refresh_loop(
-    chainlink_provider, liq_provider, macro_provider,
+    chainlink_provider,
+    liq_provider,
+    macro_provider,
 ) -> None:
     """Keep the Chainlink + liquidation + macro caches warm.
 
@@ -236,7 +237,8 @@ async def main_async() -> None:
             continue
         strategy_cfg = tomli.loads(Path(entry["params_file"]).read_text())
         strategy = await _load_strategy(
-            name, strategy_cfg,
+            name,
+            strategy_cfg,
             macro_provider=macro_provider,
             hmm_detector=hmm_detector,
             chainlink_provider=chainlink_provider,
@@ -280,7 +282,9 @@ async def main_async() -> None:
         asyncio.create_task(heartbeat.run(), name="heartbeat"),
         asyncio.create_task(
             _shared_providers_refresh_loop(
-                chainlink_provider, liq_provider, macro_provider,
+                chainlink_provider,
+                liq_provider,
+                macro_provider,
             ),
             name="shared_providers_refresh",
         ),

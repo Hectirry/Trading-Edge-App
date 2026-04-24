@@ -28,9 +28,7 @@ class _StubSettings:
 
 
 def test_delta_bps_sign_matches_direction() -> None:
-    assert binance_chainlink_delta_bps(70_100.0, 70_000.0) == pytest.approx(
-        14.2857, abs=1e-3
-    )
+    assert binance_chainlink_delta_bps(70_100.0, 70_000.0) == pytest.approx(14.2857, abs=1e-3)
     assert binance_chainlink_delta_bps(69_900.0, 70_000.0) < 0
 
 
@@ -93,8 +91,11 @@ async def test_fetch_cached_uses_cache_within_ttl() -> None:
         async def latest(self):
             calls["n"] += 1
             return ChainlinkSnapshot(
-                feed="x", round_id=1, answer=70_000.0,
-                updated_at_ts=0.0, source="eac_polygon",
+                feed="x",
+                round_id=1,
+                answer=70_000.0,
+                updated_at_ts=0.0,
+                source="eac_polygon",
             )
 
     cache: dict = {}

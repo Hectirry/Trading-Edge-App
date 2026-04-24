@@ -36,9 +36,7 @@ def _side_flow(
     return now_size - prev_size
 
 
-def mlofi(
-    prev: Sequence[OrderBookLevel], now: Sequence[OrderBookLevel]
-) -> list[float]:
+def mlofi(prev: Sequence[OrderBookLevel], now: Sequence[OrderBookLevel]) -> list[float]:
     """Per-level OFI: bid flow − ask flow.
 
     Both snapshots must have the same number of levels (the caller

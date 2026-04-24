@@ -23,12 +23,12 @@ from trading.common.logging import get_logger
 
 log = get_logger("bots.telegram.commands")
 
-POLL_TIMEOUT_S = 25          # long-poll upper bound
-HTTP_TIMEOUT_S = 30.0        # httpx read timeout (> POLL_TIMEOUT_S)
+POLL_TIMEOUT_S = 25  # long-poll upper bound
+HTTP_TIMEOUT_S = 30.0  # httpx read timeout (> POLL_TIMEOUT_S)
 KILLSWITCH_CONFIRM = "sí lo entiendo"
-KILLSWITCH_FSM_TTL_S = 120   # pending confirmation expires after 2 min
+KILLSWITCH_FSM_TTL_S = 120  # pending confirmation expires after 2 min
 LLM_SESSION_TTL_S = 4 * 3600  # 4 hours of idle before /ask starts a new session
-TELEGRAM_MSG_MAX = 4000       # keep a safety margin under Telegram's 4096 limit
+TELEGRAM_MSG_MAX = 4000  # keep a safety margin under Telegram's 4096 limit
 
 
 def _fmt_pct(v: float | None) -> str:
@@ -314,8 +314,7 @@ class CommandPoller:
             return
         await self._reply(
             chat_id,
-            f"pnl ({period}): {_fmt_money(body.get('pnl'))}  "
-            f"(n={body.get('n_trades')})",
+            f"pnl ({period}): {_fmt_money(body.get('pnl'))}  " f"(n={body.get('n_trades')})",
         )
 
     async def _cmd_restart(self, chat_id: int, user_id: int, args: str) -> None:
@@ -365,9 +364,7 @@ class CommandPoller:
             f"(expires in {KILLSWITCH_FSM_TTL_S}s; any other reply cancels)",
         )
 
-    async def _cmd_killswitch_confirm(
-        self, chat_id: int, user_id: int, text: str
-    ) -> None:
+    async def _cmd_killswitch_confirm(self, chat_id: int, user_id: int, text: str) -> None:
         if text.strip().lower() != KILLSWITCH_CONFIRM:
             await self._reply(chat_id, "phrase did not match. kill switch NOT armed.")
             return

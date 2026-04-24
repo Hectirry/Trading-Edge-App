@@ -16,7 +16,7 @@ def lee_mykland_jump_flag(
 ) -> bool:
     if window_s < 4 or len(spots) < window_s + 1:
         return False
-    tail = spots[-(window_s + 1):]
+    tail = spots[-(window_s + 1) :]
     rets: list[float] = []
     for i in range(1, len(tail)):
         if tail[i - 1] <= 0 or tail[i] <= 0:

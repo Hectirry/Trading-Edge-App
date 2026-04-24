@@ -50,11 +50,15 @@ def _fetch_closes(pg_dsn: str, since_ts: int, until_ts: int) -> list[float]:
 
 def _git_sha() -> str:
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).resolve().parents[3],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=Path(__file__).resolve().parents[3],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return "unknown"
 
@@ -106,8 +110,7 @@ def main() -> int:
     log.info("fit converged: %s, score=%.4f", model.monitor_.converged, float(model.score(X)))
 
     means = [
-        (float(model.means_[i, 0]), float(model.means_[i, 1]))
-        for i in range(model.n_components)
+        (float(model.means_[i, 0]), float(model.means_[i, 1])) for i in range(model.n_components)
     ]
     labels = canonical_label_order(means)
     log.info("state labels: %s", labels)
@@ -151,11 +154,16 @@ def main() -> int:
                 VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb,
                         $7, $8, $9, now(), $10)
                 """,
-                uuid.uuid4(), "hmm_regime_btc5m", version, str(out_dir),
+                uuid.uuid4(),
+                "hmm_regime_btc5m",
+                version,
+                str(out_dir),
                 json.dumps(meta),
                 json.dumps({}),
-                t_from, t_to,
-                meta["git_sha"], bool(args.promote),
+                t_from,
+                t_to,
+                meta["git_sha"],
+                bool(args.promote),
             )
         await close_pool()
 

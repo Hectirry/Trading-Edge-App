@@ -22,7 +22,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class LiqCluster:
     ts: float
-    side: str       # 'long' | 'short'
+    side: str  # 'long' | 'short'
     price: float
     size_usd: float
 

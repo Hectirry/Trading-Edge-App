@@ -72,11 +72,7 @@ class TickRecorder:
                 # at 0 and let the watchdog's ohlcv fallback handle it.
                 window_open = m.window_close_ts - 300
                 t_in_win = max(0.0, now - window_open)
-                if (
-                    not m.open_price_captured
-                    and now >= window_open
-                    and t_in_win <= 5.0
-                ):
+                if not m.open_price_captured and now >= window_open and t_in_win <= 5.0:
                     # Prefer spot (continuous Binance 1Hz) for the open
                     # snapshot; Chainlink freezes too often on Polygon
                     # EAC to be trusted as the window-open reference.

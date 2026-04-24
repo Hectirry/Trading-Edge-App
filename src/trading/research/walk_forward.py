@@ -22,17 +22,17 @@ Verdict = str  # narrow via typing.Literal when we lock the surface
 
 
 # Verdict thresholds. Override via config if we later need per-strategy tuning.
-AUC_STABLE_WINDOW = 0.03       # |IS - OOS| ≤ 0.03 per-fold ⇒ stable
-AUC_DRIFT_WINDOW = 0.05        # |IS - OOS| > 0.05 ⇒ drift
-MIN_TRADES_OOS = 20            # < 20 OOS trades ⇒ unvalidated
-MIN_FOLDS_FOR_VERDICT = 3      # aggregate verdict needs ≥ 3 valid folds
+AUC_STABLE_WINDOW = 0.03  # |IS - OOS| ≤ 0.03 per-fold ⇒ stable
+AUC_DRIFT_WINDOW = 0.05  # |IS - OOS| > 0.05 ⇒ drift
+MIN_TRADES_OOS = 20  # < 20 OOS trades ⇒ unvalidated
+MIN_FOLDS_FOR_VERDICT = 3  # aggregate verdict needs ≥ 3 valid folds
 
 
 @dataclass(frozen=True)
 class FoldWindow:
     idx: int
-    is_from: datetime          # in-sample start
-    is_to: datetime            # in-sample end (= OOS start)
+    is_from: datetime  # in-sample start
+    is_to: datetime  # in-sample end (= OOS start)
     oos_from: datetime
     oos_to: datetime
 
@@ -47,8 +47,11 @@ class FoldWindow:
 
 def build_folds(
     *,
-    t_from: datetime, t_to: datetime,
-    is_days: int, oos_days: int, step_days: int,
+    t_from: datetime,
+    t_to: datetime,
+    is_days: int,
+    oos_days: int,
+    step_days: int,
 ) -> list[FoldWindow]:
     """Tile the [t_from, t_to] range with walking folds.
 
@@ -70,10 +73,15 @@ def build_folds(
         oos_to = oos_from + timedelta(days=oos_days)
         if oos_to > t_to:
             break
-        folds.append(FoldWindow(
-            idx=idx, is_from=is_from, is_to=is_to,
-            oos_from=oos_from, oos_to=oos_to,
-        ))
+        folds.append(
+            FoldWindow(
+                idx=idx,
+                is_from=is_from,
+                is_to=is_to,
+                oos_from=oos_from,
+                oos_to=oos_to,
+            )
+        )
         idx += 1
         anchor = anchor + timedelta(days=step_days)
     return folds
@@ -122,10 +130,7 @@ def aggregate_verdicts(fold_results: list[dict]) -> dict:
         }
 
     verdicts = [r.get("verdict", "unknown") for r in fold_results]
-    aucs = [
-        r["auc_oos"] for r in fold_results
-        if r.get("auc_oos") is not None
-    ]
+    aucs = [r["auc_oos"] for r in fold_results if r.get("auc_oos") is not None]
     pnls = [r.get("pnl_oos", 0.0) for r in fold_results if r.get("pnl_oos") is not None]
 
     n_total = len(fold_results)
@@ -139,8 +144,12 @@ def aggregate_verdicts(fold_results: list[dict]) -> dict:
     from collections import Counter
 
     priority = {
-        "drift": 0, "unstable_aucs": 1, "unvalidated_small_sample": 2,
-        "no_model_auc": 3, "stable": 4, "unknown": 5,
+        "drift": 0,
+        "unstable_aucs": 1,
+        "unvalidated_small_sample": 2,
+        "no_model_auc": 3,
+        "stable": 4,
+        "unknown": 5,
     }
     counts = Counter(verdicts)
     max_count = max(counts.values())
@@ -171,8 +180,11 @@ def aggregate_verdicts(fold_results: list[dict]) -> dict:
 def default_folds(t_from: datetime, t_to: datetime) -> list[FoldWindow]:
     """5-day IS / 1-day OOS / step 1-day, the approved Phase 3.8 default."""
     return build_folds(
-        t_from=t_from, t_to=t_to,
-        is_days=5, oos_days=1, step_days=1,
+        t_from=t_from,
+        t_to=t_to,
+        is_days=5,
+        oos_days=1,
+        step_days=1,
     )
 
 

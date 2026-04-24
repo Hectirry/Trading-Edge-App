@@ -110,7 +110,8 @@ class PaperDriver:
                 try:
                     async with self._redis.pubsub() as pubsub:
                         await pubsub.subscribe(
-                            REDIS_CHANNEL, self._control_channel,
+                            REDIS_CHANNEL,
+                            self._control_channel,
                         )
                         backoff = 1.0  # reset on successful subscribe
                         async for msg in pubsub.listen():
@@ -132,14 +133,16 @@ class PaperDriver:
                                 await self._handle_tick(tick_dict)
                             except Exception as e:
                                 log.exception(
-                                    "paper.driver.handle_tick.err", err=str(e),
+                                    "paper.driver.handle_tick.err",
+                                    err=str(e),
                                 )
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     log.error(
                         "paper.driver.pubsub.disconnected",
-                        err=str(e), backoff_s=backoff,
+                        err=str(e),
+                        backoff_s=backoff,
                     )
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 30.0)
@@ -181,7 +184,8 @@ class PaperDriver:
         if rows:
             log.info(
                 "paper.driver.rehydrated_trade_taken",
-                strategy=self.strategy.name, n_slugs=len(rows),
+                strategy=self.strategy.name,
+                n_slugs=len(rows),
             )
 
     async def _rehydrate_pause_state(self) -> None:
@@ -451,8 +455,7 @@ class PaperDriver:
                 expired = [
                     (slug, pos)
                     for slug, pos in list(self._open_positions.items())
-                    if pos.window_close_ts > 0
-                    and (now - pos.window_close_ts) > 15
+                    if pos.window_close_ts > 0 and (now - pos.window_close_ts) > 15
                 ]
                 for slug, pos in expired:
                     await self._settle_via_watchdog(slug, pos, now)
@@ -467,9 +470,7 @@ class PaperDriver:
         )
         if settle_price is None and age > 120:
             # Step 2: Binance 1 m close for the minute of window_close_ts.
-            settle_price, settle_ts = await self._ohlcv_close_at(
-                pos.window_close_ts
-            )
+            settle_price, settle_ts = await self._ohlcv_close_at(pos.window_close_ts)
             source = "ohlcv"
         if settle_price is None:
             if age > 600:  # 10 min past close and still nothing → give up.
@@ -490,7 +491,8 @@ class PaperDriver:
         # LAST paper_tick (t_in_window ≈ 300). Fetch both spots and use
         # those; fall back to ohlcv 1m candle if either is missing.
         open_price, open_source = await self._first_paper_tick_spot(
-            pos.condition_id, window_close_ts=pos.window_close_ts,
+            pos.condition_id,
+            window_close_ts=pos.window_close_ts,
         )
         if open_price is None:
             open_price, _ = await self._ohlcv_close_at(pos.window_close_ts - 300)
@@ -498,7 +500,8 @@ class PaperDriver:
         if open_price is None or open_price <= 0:
             log.error(
                 "paper.driver.settle_no_open_price",
-                slug=slug, close_ts=pos.window_close_ts,
+                slug=slug,
+                close_ts=pos.window_close_ts,
             )
             return
         source = f"{source}+open={open_source}"
@@ -544,7 +547,9 @@ class PaperDriver:
                     "WHERE condition_id = $1 "
                     "  AND ts BETWEEN $2 AND $3 "
                     "ORDER BY ts DESC LIMIT 1",
-                    condition_id, window_start_dt, cutoff_dt,
+                    condition_id,
+                    window_start_dt,
+                    cutoff_dt,
                 )
         except Exception as e:
             log.warning("paper.driver.settle.paper_tick_query_err", err=str(e))
@@ -560,7 +565,9 @@ class PaperDriver:
         return None, close_ts, "no_price_in_tick"
 
     async def _first_paper_tick_spot(
-        self, condition_id: str, window_close_ts: float,
+        self,
+        condition_id: str,
+        window_close_ts: float,
     ) -> tuple[float | None, str]:
         """Return the spot_price of the first paper_tick for THIS
         window (≈ window_close_ts - 300).
@@ -572,9 +579,7 @@ class PaperDriver:
         different window and computes went_up backwards.
         """
         if window_close_ts is None or window_close_ts <= 0:
-            raise ValueError(
-                "window_close_ts is required to prevent stale cross-window picks"
-            )
+            raise ValueError("window_close_ts is required to prevent stale cross-window picks")
         window_start_dt = datetime.fromtimestamp(window_close_ts - 305, tz=UTC)
         window_end_dt = datetime.fromtimestamp(window_close_ts + 5, tz=UTC)
         try:
@@ -586,7 +591,9 @@ class PaperDriver:
                     "  AND ts BETWEEN $2 AND $3 "
                     "  AND spot_price IS NOT NULL AND spot_price > 0 "
                     "ORDER BY ts ASC LIMIT 1",
-                    condition_id, window_start_dt, window_end_dt,
+                    condition_id,
+                    window_start_dt,
+                    window_end_dt,
                 )
         except Exception as e:
             log.warning("paper.driver.settle.first_tick_err", err=str(e))

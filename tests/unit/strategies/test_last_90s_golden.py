@@ -47,8 +47,12 @@ class _StubModel:
 
 def _macro() -> MacroSnapshot:
     return MacroSnapshot(
-        ema8=110.0, ema34=100.0, adx_14=25.0,
-        consecutive_same_dir=3, regime="uptrend", ema8_vs_ema34_pct=10.0,
+        ema8=110.0,
+        ema34=100.0,
+        adx_14=25.0,
+        consecutive_same_dir=3,
+        regime="uptrend",
+        ema8_vs_ema34_pct=10.0,
     )
 
 
@@ -56,17 +60,29 @@ def _ctx_at(t_in_window: float, implied: float) -> TickContext:
     now = 1_700_000_000.0 + t_in_window
     spots = [70_000.0 * (1.0 + 0.01 * i / 89.0) for i in range(90)]
     recent = [
-        _RecentTick(ts=now - (len(spots) - i), spot_price=spots[i])
-        for i in range(len(spots))
+        _RecentTick(ts=now - (len(spots) - i), spot_price=spots[i]) for i in range(len(spots))
     ]
     return TickContext(
-        ts=now, market_slug="btc-updown-5m-golden", t_in_window=t_in_window,
+        ts=now,
+        market_slug="btc-updown-5m-golden",
+        t_in_window=t_in_window,
         window_close_ts=now + (300 - t_in_window),
-        spot_price=spots[-1], chainlink_price=spots[-1], open_price=spots[0],
-        pm_yes_bid=0.47, pm_yes_ask=0.48, pm_no_bid=0.52, pm_no_ask=0.53,
-        pm_depth_yes=100.0, pm_depth_no=100.0, pm_imbalance=0.0,
-        pm_spread_bps=50.0, implied_prob_yes=implied,
-        model_prob_yes=0.5, edge=0.0, z_score=0.0, vol_regime="normal",
+        spot_price=spots[-1],
+        chainlink_price=spots[-1],
+        open_price=spots[0],
+        pm_yes_bid=0.47,
+        pm_yes_ask=0.48,
+        pm_no_bid=0.52,
+        pm_no_ask=0.53,
+        pm_depth_yes=100.0,
+        pm_depth_no=100.0,
+        pm_imbalance=0.0,
+        pm_spread_bps=50.0,
+        implied_prob_yes=implied,
+        model_prob_yes=0.5,
+        edge=0.0,
+        z_score=0.0,
+        vol_regime="normal",
         recent_ticks=recent,
     )
 
@@ -94,12 +110,17 @@ def _scenario() -> list[tuple[float, float]]:
 
 
 def _run_v1() -> list[dict]:
-    cfg = {"params": {
-        "entry_window_start_s": 205, "entry_window_end_s": 215,
-        "momentum_divisor_bps": 40.0, "edge_threshold": 0.04,
-        "spread_max_bps": 150.0, "adx_threshold": 20.0,
-        "consecutive_min": 2,
-    }}
+    cfg = {
+        "params": {
+            "entry_window_start_s": 205,
+            "entry_window_end_s": 215,
+            "momentum_divisor_bps": 40.0,
+            "edge_threshold": 0.04,
+            "spread_max_bps": 150.0,
+            "adx_threshold": 20.0,
+            "consecutive_min": 2,
+        }
+    }
     s = Last90sForecasterV1(cfg, macro_provider=_StubMacro(_macro()))
     return [
         {"t_in_window": t, "implied": p, **_decision_to_dict(s.should_enter(_ctx_at(t, p)))}
@@ -108,11 +129,17 @@ def _run_v1() -> list[dict]:
 
 
 def _run_v2() -> list[dict]:
-    cfg = {"params": {
-        "entry_window_start_s": 205, "entry_window_end_s": 215,
-        "edge_threshold": 0.04, "spread_max_bps": 150.0,
-        "adx_threshold": 20.0, "consecutive_min": 2,
-    }, "paper": {"shadow": False}}
+    cfg = {
+        "params": {
+            "entry_window_start_s": 205,
+            "entry_window_end_s": 215,
+            "edge_threshold": 0.04,
+            "spread_max_bps": 150.0,
+            "adx_threshold": 20.0,
+            "consecutive_min": 2,
+        },
+        "paper": {"shadow": False},
+    }
     s = Last90sForecasterV2(cfg, macro_provider=_StubMacro(_macro()), model=_StubModel())
     return [
         {"t_in_window": t, "implied": p, **_decision_to_dict(s.should_enter(_ctx_at(t, p)))}

@@ -48,7 +48,9 @@ async def _compute_arm(conn, strategy_id: str, since: datetime, until: datetime)
             COUNT(*) AS n_rows_total
         FROM orders;
         """,
-        strategy_id, since, until,
+        strategy_id,
+        since,
+        until,
     )
     n_predicted = int(row["n_predicted"] or 0)
     n_correct = int(row["n_correct"] or 0)
@@ -67,12 +69,17 @@ async def _compute_arm(conn, strategy_id: str, since: datetime, until: datetime)
             from statsmodels.stats.proportion import proportion_confint, proportions_ztest
 
             stat, p = proportions_ztest(
-                count=n_correct, nobs=n_predicted, value=BASELINE_ACCURACY,
+                count=n_correct,
+                nobs=n_predicted,
+                value=BASELINE_ACCURACY,
                 alternative="two-sided",
             )
             p_value = float(p)
             ci_lo, ci_hi = proportion_confint(
-                count=n_correct, nobs=n_predicted, alpha=0.05, method="wilson",
+                count=n_correct,
+                nobs=n_predicted,
+                alpha=0.05,
+                method="wilson",
             )
         except Exception as e:
             log.warning("statsmodels.err", err=str(e))
@@ -90,7 +97,11 @@ async def _compute_arm(conn, strategy_id: str, since: datetime, until: datetime)
 
 
 async def _write_and_digest(
-    week_start: datetime, week_end: datetime, results: list[tuple[str, dict]], *, quiet: bool,
+    week_start: datetime,
+    week_end: datetime,
+    results: list[tuple[str, dict]],
+    *,
+    quiet: bool,
 ) -> None:
     from trading.common.db import acquire
 
@@ -115,10 +126,17 @@ async def _write_and_digest(
                     p_value_vs_baseline = EXCLUDED.p_value_vs_baseline,
                     details = EXCLUDED.details
                 """,
-                week_start, strategy_id,
-                res["n_windows_total"], res["n_predicted"], res["n_correct"],
-                res["accuracy"], res["coverage"], res["adjusted"],
-                res["ci_lower"], res["ci_upper"], res["p_value"],
+                week_start,
+                strategy_id,
+                res["n_windows_total"],
+                res["n_predicted"],
+                res["n_correct"],
+                res["accuracy"],
+                res["coverage"],
+                res["adjusted"],
+                res["ci_lower"],
+                res["ci_upper"],
+                res["p_value"],
                 json.dumps(res),
             )
     if quiet:
@@ -131,11 +149,13 @@ async def _write_and_digest(
         from trading.notifications import telegram as T
 
         client = T.TelegramClient()
-        await client.send(T.AlertEvent(
-            kind="CONTEST_AB_WEEKLY",
-            text=msg,
-            severity=T.Severity.INFO,
-        ))
+        await client.send(
+            T.AlertEvent(
+                kind="CONTEST_AB_WEEKLY",
+                text=msg,
+                severity=T.Severity.INFO,
+            )
+        )
         await client.aclose()
     except Exception as e:
         log.warning("telegram.send_err", err=str(e))
@@ -153,16 +173,10 @@ def _format_digest(week_start, week_end, results) -> str:
         cov = res["coverage"]
         acc_by_arm[strategy_id] = acc
         lines.append(f"— {strategy_id}")
-        lines.append(
-            f"  predicted={res['n_predicted']}  correct={res['n_correct']}"
-        )
-        lines.append(
-            f"  accuracy={_fmt_pct(acc)}  coverage={_fmt_pct(cov)}"
-        )
+        lines.append(f"  predicted={res['n_predicted']}  correct={res['n_correct']}")
+        lines.append(f"  accuracy={_fmt_pct(acc)}  coverage={_fmt_pct(cov)}")
         if res["ci_lower"] is not None:
-            lines.append(
-                f"  95% CI [{res['ci_lower']*100:.1f}%, {res['ci_upper']*100:.1f}%]"
-            )
+            lines.append(f"  95% CI [{res['ci_lower']*100:.1f}%, {res['ci_upper']*100:.1f}%]")
         if res["p_value"] is not None:
             lines.append(f"  p(vs 0.50) = {res['p_value']:.4f}")
     # Winner call
@@ -172,9 +186,7 @@ def _format_digest(week_start, week_end, results) -> str:
         delta = a - b
         call = ARMS[0] if a > b else ARMS[1]
         lines.append("")
-        lines.append(
-            f"current leader: {call}  (Δacc={delta*100:+.1f} pp)"
-        )
+        lines.append(f"current leader: {call}  (Δacc={delta*100:+.1f} pp)")
     return "\n".join(lines)
 
 
@@ -204,10 +216,8 @@ async def main_async(args):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--week-start", default=None,
-                    help="ISO datetime (UTC); defaults to now - 7d.")
-    ap.add_argument("--quiet", action="store_true",
-                    help="Skip Telegram send; still writes DB row.")
+    ap.add_argument("--week-start", default=None, help="ISO datetime (UTC); defaults to now - 7d.")
+    ap.add_argument("--quiet", action="store_true", help="Skip Telegram send; still writes DB row.")
     args = ap.parse_args()
     return asyncio.run(main_async(args))
 

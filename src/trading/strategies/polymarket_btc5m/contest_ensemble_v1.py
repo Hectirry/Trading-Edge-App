@@ -127,7 +127,8 @@ class ContestEnsembleV1(StrategyBase):
             return Decision(Action.SKIP, reason="already_entered")
 
         spots = [
-            t.spot_price for t in ctx.recent_ticks
+            t.spot_price
+            for t in ctx.recent_ticks
             if hasattr(t, "ts") and (ctx.ts - t.ts) <= 90.0 and t.spot_price > 0
         ]
         spots.append(ctx.spot_price)
@@ -160,7 +161,10 @@ class ContestEnsembleV1(StrategyBase):
             p_raw = (pa_prob * pa_conf + pb_prob * pb_conf + pc_prob * pc_conf) / total_w
         else:
             feature_vec = self._build_meta_features(
-                ctx, cp_t, regime_state, macro_snap,
+                ctx,
+                cp_t,
+                regime_state,
+                macro_snap,
                 [(pa_prob, pa_conf), (pb_prob, pb_conf), (pc_prob, pc_conf)],
             )
             p_raw = self.model.predict_proba(feature_vec)
@@ -170,9 +174,12 @@ class ContestEnsembleV1(StrategyBase):
             "cp_t": cp_t,
             "p_raw": p_raw,
             "p_cal": p_cal,
-            "pa_prob": pa_prob, "pa_conf": pa_conf,
-            "pb_prob": pb_prob, "pb_conf": pb_conf,
-            "pc_prob": pc_prob, "pc_conf": pc_conf,
+            "pa_prob": pa_prob,
+            "pa_conf": pa_conf,
+            "pb_prob": pb_prob,
+            "pb_conf": pb_conf,
+            "pc_prob": pc_prob,
+            "pc_conf": pc_conf,
             "regime": regime_state.label if regime_state else "unknown",
         }
 
@@ -180,11 +187,13 @@ class ContestEnsembleV1(StrategyBase):
             if ctx.t_in_window >= CHECKPOINTS[-1] + CHECKPOINT_TOL_S:
                 self._last_entered_per_market[ctx.market_slug] = True
                 return Decision(
-                    Action.SKIP, reason="contest_abstained",
+                    Action.SKIP,
+                    reason="contest_abstained",
                     signal_features=features,
                 )
             return Decision(
-                Action.SKIP, reason="conformal_abstain",
+                Action.SKIP,
+                reason="conformal_abstain",
                 signal_features=features,
             )
 
@@ -202,7 +211,11 @@ class ContestEnsembleV1(StrategyBase):
 
     @staticmethod
     def _build_meta_features(
-        ctx, cp_t, regime_state, macro_snap, l3_outs,
+        ctx,
+        cp_t,
+        regime_state,
+        macro_snap,
+        l3_outs,
     ) -> list[float]:
         regime_onehot = [0.0, 0.0, 0.0, 0.0]  # bull, bear, ranging, high_vol
         if regime_state is not None:
@@ -212,9 +225,15 @@ class ContestEnsembleV1(StrategyBase):
         adx = macro_snap.adx_14 if macro_snap else 0.0
         return [
             cp_t / 300.0,
-            pa[0], pa[1], pb[0], pb[1], pc[0], pc[1],
+            pa[0],
+            pa[1],
+            pb[0],
+            pb[1],
+            pc[0],
+            pc[1],
             *regime_onehot,
-            ema_pct, adx,
+            ema_pct,
+            adx,
             float(ctx.pm_spread_bps),
             float(ctx.implied_prob_yes),
         ]
@@ -234,8 +253,7 @@ def load_meta_model_async_factory():
         try:
             async with acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT path FROM research.models "
-                    "WHERE name = $1 AND is_active = TRUE",
+                    "SELECT path FROM research.models " "WHERE name = $1 AND is_active = TRUE",
                     "contest_ensemble_v1_meta",
                 )
         except Exception as e:
@@ -248,11 +266,13 @@ def load_meta_model_async_factory():
             log.warning("meta.model_missing", path=str(model_file))
             return None
         import lightgbm as lgb
+
         booster = lgb.Booster(model_file=str(model_file))
 
         class _Runner:
             def predict_proba(self, x):
                 import numpy as np
+
                 arr = np.asarray([x], dtype=np.float64)
                 return float(booster.predict(arr)[0])
 

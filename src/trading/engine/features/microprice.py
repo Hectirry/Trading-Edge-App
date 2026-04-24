@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 
-def microprice(
-    yes_ask: float, no_ask: float, depth_yes: float, depth_no: float
-) -> float:
+def microprice(yes_ask: float, no_ask: float, depth_yes: float, depth_no: float) -> float:
     """Depth-weighted fair probability of YES.
 
     yes_ask + no_ask ≈ 1.0 in a healthy book; we interpret yes_ask as

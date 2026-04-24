@@ -37,8 +37,12 @@ class _StubHMM:
 
 def _macro() -> MacroSnapshot:
     return MacroSnapshot(
-        ema8=110.0, ema34=100.0, adx_14=25.0,
-        consecutive_same_dir=3, regime="uptrend", ema8_vs_ema34_pct=10.0,
+        ema8=110.0,
+        ema34=100.0,
+        adx_14=25.0,
+        consecutive_same_dir=3,
+        regime="uptrend",
+        ema8_vs_ema34_pct=10.0,
     )
 
 
@@ -46,17 +50,29 @@ def _ctx(t_in_window: float = 210.0, slug: str = "btc-updown-5m-1") -> TickConte
     now = 1_700_000_000.0 + t_in_window
     spots = [70_000.0 * (1.0 + 0.0005 * i) for i in range(90)]
     recent = [
-        _RecentTick(ts=now - (len(spots) - i), spot_price=spots[i])
-        for i in range(len(spots))
+        _RecentTick(ts=now - (len(spots) - i), spot_price=spots[i]) for i in range(len(spots))
     ]
     return TickContext(
-        ts=now, market_slug=slug, t_in_window=t_in_window,
+        ts=now,
+        market_slug=slug,
+        t_in_window=t_in_window,
         window_close_ts=now + (300 - t_in_window),
-        spot_price=spots[-1], chainlink_price=spots[-1], open_price=spots[0],
-        pm_yes_bid=0.47, pm_yes_ask=0.48, pm_no_bid=0.52, pm_no_ask=0.53,
-        pm_depth_yes=100.0, pm_depth_no=100.0, pm_imbalance=0.3,
-        pm_spread_bps=50.0, implied_prob_yes=0.48,
-        model_prob_yes=0.5, edge=0.0, z_score=0.0, vol_regime="normal",
+        spot_price=spots[-1],
+        chainlink_price=spots[-1],
+        open_price=spots[0],
+        pm_yes_bid=0.47,
+        pm_yes_ask=0.48,
+        pm_no_bid=0.52,
+        pm_no_ask=0.53,
+        pm_depth_yes=100.0,
+        pm_depth_no=100.0,
+        pm_imbalance=0.3,
+        pm_spread_bps=50.0,
+        implied_prob_yes=0.48,
+        model_prob_yes=0.5,
+        edge=0.0,
+        z_score=0.0,
+        vol_regime="normal",
         recent_ticks=recent,
     )
 
@@ -86,7 +102,9 @@ def test_enter_or_abstain_at_each_checkpoint() -> None:
         if d.action is Action.SKIP:
             # Only conformal_abstain or contest_abstained are valid here.
             assert d.reason in (
-                "conformal_abstain", "contest_abstained", "insufficient_micro_data",
+                "conformal_abstain",
+                "contest_abstained",
+                "insufficient_micro_data",
             )
 
 

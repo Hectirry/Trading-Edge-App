@@ -123,15 +123,21 @@ async def _eval_hmm_fold(fold: FoldWindow) -> dict:
     # 5-day IS windows we routinely hit numerical errors, so fall back
     # to `diag` for the fold fit only. Production models keep `full`.
     model = hmmlib.GaussianHMM(
-        n_components=4, covariance_type="full",
-        n_iter=100, tol=1e-4, random_state=42,
+        n_components=4,
+        covariance_type="full",
+        n_iter=100,
+        tol=1e-4,
+        random_state=42,
     )
     try:
         model.fit(X)
     except (LinAlgError, ValueError):
         model = hmmlib.GaussianHMM(
-            n_components=4, covariance_type="diag",
-            n_iter=100, tol=1e-4, random_state=42,
+            n_components=4,
+            covariance_type="diag",
+            n_iter=100,
+            tol=1e-4,
+            random_state=42,
         )
         model.fit(X)
     score_is = float(model.score(X))
@@ -149,17 +155,20 @@ async def _eval_hmm_fold(fold: FoldWindow) -> dict:
         score_oos = float(model.score(X_oos)) / max(len(X_oos), 1)
 
     means = [
-        (float(model.means_[i, 0]), float(model.means_[i, 1]))
-        for i in range(model.n_components)
+        (float(model.means_[i, 0]), float(model.means_[i, 1])) for i in range(model.n_components)
     ]
     labels = canonical_label_order(means)
     verdict = classify_fold(auc_is=None, auc_oos=None, n_trades_oos=n_oos)
     return {
         "fold": fold.idx,
-        "is_from": fold.is_from.isoformat(), "is_to": fold.is_to.isoformat(),
-        "oos_from": fold.oos_from.isoformat(), "oos_to": fold.oos_to.isoformat(),
-        "auc_is": None, "auc_oos": None,
-        "score_is": score_is, "score_oos": score_oos,
+        "is_from": fold.is_from.isoformat(),
+        "is_to": fold.is_to.isoformat(),
+        "oos_from": fold.oos_from.isoformat(),
+        "oos_to": fold.oos_to.isoformat(),
+        "auc_is": None,
+        "auc_oos": None,
+        "score_is": score_is,
+        "score_oos": score_oos,
         "n_trades_oos": n_oos,
         "state_labels": labels,
         "pnl_oos": 0.0,
@@ -192,7 +201,8 @@ async def _eval_last_90s_v2_fold(fold: FoldWindow) -> dict:
     oos_markets = [m for m in markets if _in(m, fold.oos_from, fold.oos_to)]
     if len(is_markets) < 50 or len(oos_markets) < 10:
         return _unvalidated_fold(
-            fold, n_trades_oos=len(oos_markets),
+            fold,
+            n_trades_oos=len(oos_markets),
             note=f"is={len(is_markets)} oos={len(oos_markets)}",
         )
 
@@ -213,7 +223,8 @@ async def _eval_last_90s_v2_fold(fold: FoldWindow) -> dict:
     )
     if len(is_samples) < 40 or len(oos_samples) < 10:
         return _unvalidated_fold(
-            fold, n_trades_oos=len(oos_samples),
+            fold,
+            n_trades_oos=len(oos_samples),
             note="post-feature-build insufficient",
         )
 
@@ -229,13 +240,18 @@ async def _eval_last_90s_v2_fold(fold: FoldWindow) -> dict:
     brier_oos = float(brier_score_loss(y_oos, probs))
     auc_is = trained["metrics"].get("test_auc")
     verdict = classify_fold(
-        auc_is=auc_is, auc_oos=auc_oos, n_trades_oos=len(oos_samples),
+        auc_is=auc_is,
+        auc_oos=auc_oos,
+        n_trades_oos=len(oos_samples),
     )
     return {
         "fold": fold.idx,
-        "is_from": fold.is_from.isoformat(), "is_to": fold.is_to.isoformat(),
-        "oos_from": fold.oos_from.isoformat(), "oos_to": fold.oos_to.isoformat(),
-        "auc_is": auc_is, "auc_oos": auc_oos,
+        "is_from": fold.is_from.isoformat(),
+        "is_to": fold.is_to.isoformat(),
+        "oos_from": fold.oos_from.isoformat(),
+        "oos_to": fold.oos_to.isoformat(),
+        "auc_is": auc_is,
+        "auc_oos": auc_oos,
         "brier_oos": brier_oos,
         "n_trades_oos": len(oos_samples),
         "pnl_oos": None,
@@ -247,7 +263,9 @@ async def _eval_last_90s_v2_fold(fold: FoldWindow) -> dict:
 
 
 def _replay_rules_fold(
-    args: argparse.Namespace, strategy: str, fold: FoldWindow,
+    args: argparse.Namespace,
+    strategy: str,
+    fold: FoldWindow,
 ) -> dict:
     """Run the Phase-2 replay for a rule-based strategy on one fold.
 
@@ -271,7 +289,8 @@ def _replay_rules_fold(
 
     if not args.params:
         return _unvalidated_fold(
-            fold, note="--params required for rule-based WF",
+            fold,
+            note="--params required for rule-based WF",
         )
     cfg = tomli.loads(Path(args.params).read_text())
     if not Path(args.polybot_db).exists():
@@ -279,7 +298,8 @@ def _replay_rules_fold(
 
     factory = _rules_factory(strategy, cfg)
     loader = PolybotSQLiteLoader(
-        args.polybot_db, slug_encodes_open_ts=args.slug_encodes_open_ts,
+        args.polybot_db,
+        slug_encodes_open_ts=args.slug_encodes_open_ts,
     )
 
     # Run exactly one split with IS = [is_from, is_to), OOS = [oos_from, oos_to].
@@ -315,9 +335,12 @@ def _replay_rules_fold(
     verdict = classify_fold(auc_is=None, auc_oos=None, n_trades_oos=n_trades_oos)
     return {
         "fold": fold.idx,
-        "is_from": fold.is_from.isoformat(), "is_to": fold.is_to.isoformat(),
-        "oos_from": fold.oos_from.isoformat(), "oos_to": fold.oos_to.isoformat(),
-        "auc_is": None, "auc_oos": None,
+        "is_from": fold.is_from.isoformat(),
+        "is_to": fold.is_to.isoformat(),
+        "oos_from": fold.oos_from.isoformat(),
+        "oos_to": fold.oos_to.isoformat(),
+        "auc_is": None,
+        "auc_oos": None,
         "n_trades_oos": n_trades_oos,
         "pnl_oos": pnl_oos,
         "verdict": verdict,
@@ -327,19 +350,23 @@ def _replay_rules_fold(
 def _rules_factory(strategy: str, cfg: dict):
     if strategy == "imbalance_v3":
         from trading.strategies.polymarket_btc5m.imbalance_v3 import ImbalanceV3
+
         return lambda: ImbalanceV3(config=cfg)
     if strategy == "trend_confirm_t1_v1":
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import TrendConfirmT1V1
+
         return lambda: TrendConfirmT1V1(config=cfg)
     if strategy == "last_90s_forecaster_v1":
         from trading.strategies.polymarket_btc5m.last_90s_forecaster_v1 import (
             Last90sForecasterV1,
         )
+
         return lambda: Last90sForecasterV1(config=cfg)
     if strategy == "contest_avengers_v1":
         from trading.strategies.polymarket_btc5m.contest_avengers_v1 import (
             ContestAvengersV1,
         )
+
         return lambda: ContestAvengersV1(cfg)
     raise RuntimeError(f"no rules factory for {strategy}")
 
@@ -350,9 +377,12 @@ def _rules_factory(strategy: str, cfg: dict):
 def _unvalidated_fold(fold: FoldWindow, *, n_trades_oos: int = 0, note: str = "") -> dict:
     return {
         "fold": fold.idx,
-        "is_from": fold.is_from.isoformat(), "is_to": fold.is_to.isoformat(),
-        "oos_from": fold.oos_from.isoformat(), "oos_to": fold.oos_to.isoformat(),
-        "auc_is": None, "auc_oos": None,
+        "is_from": fold.is_from.isoformat(),
+        "is_to": fold.is_to.isoformat(),
+        "oos_from": fold.oos_from.isoformat(),
+        "oos_to": fold.oos_to.isoformat(),
+        "auc_is": None,
+        "auc_oos": None,
         "n_trades_oos": n_trades_oos,
         "pnl_oos": 0.0,
         "verdict": "unvalidated_small_sample",
@@ -362,6 +392,7 @@ def _unvalidated_fold(fold: FoldWindow, *, n_trades_oos: int = 0, note: str = ""
 
 def _pg_dsn() -> str:
     import os
+
     return (
         f"postgresql://{os.environ.get('TEA_PG_USER','tea')}:"
         f"{os.environ.get('TEA_PG_PASSWORD','')}@"
@@ -372,9 +403,12 @@ def _pg_dsn() -> str:
 
 
 async def _persist(
-    *, strategy: str,
-    started_at: datetime, ended_at: datetime,
-    fold_results: list[dict], summary: dict,
+    *,
+    strategy: str,
+    started_at: datetime,
+    ended_at: datetime,
+    fold_results: list[dict],
+    summary: dict,
     promote: bool,
 ) -> str:
     from trading.common.db import acquire, close_pool
@@ -389,8 +423,10 @@ async def _persist(
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
             """,
             uuid.UUID(run_id),
-            strategy, "wf_v2",
-            started_at, ended_at,
+            strategy,
+            "wf_v2",
+            started_at,
+            ended_at,
             "completed",
             summary.get("dominant_verdict"),
             json.dumps(fold_results),
@@ -409,8 +445,11 @@ async def main_async(args: argparse.Namespace) -> int:
     t_from = _parse_ts(args.date_from)
     t_to = _parse_ts(args.date_to)
     folds = build_folds(
-        t_from=t_from, t_to=t_to,
-        is_days=args.is_days, oos_days=args.oos_days, step_days=args.step_days,
+        t_from=t_from,
+        t_to=t_to,
+        is_days=args.is_days,
+        oos_days=args.oos_days,
+        step_days=args.step_days,
     )
     if not folds:
         log.error("no folds produced; widen range or shrink is/oos days")
@@ -423,8 +462,10 @@ async def main_async(args: argparse.Namespace) -> int:
         log.info(
             "wf.fold",
             idx=fold.idx,
-            is_from=fold.is_from.date(), is_to=fold.is_to.date(),
-            oos_from=fold.oos_from.date(), oos_to=fold.oos_to.date(),
+            is_from=fold.is_from.date(),
+            is_to=fold.is_to.date(),
+            oos_from=fold.oos_from.date(),
+            oos_to=fold.oos_to.date(),
         )
         try:
             if strategy in ML_STRATEGIES:
@@ -434,10 +475,17 @@ async def main_async(args: argparse.Namespace) -> int:
         except Exception as e:
             log.exception("wf.fold_err", idx=fold.idx, err=str(e))
             result = {
-                "fold": fold.idx, "verdict": "error", "error": str(e),
-                "is_from": fold.is_from.isoformat(), "is_to": fold.is_to.isoformat(),
-                "oos_from": fold.oos_from.isoformat(), "oos_to": fold.oos_to.isoformat(),
-                "auc_is": None, "auc_oos": None, "n_trades_oos": 0, "pnl_oos": 0.0,
+                "fold": fold.idx,
+                "verdict": "error",
+                "error": str(e),
+                "is_from": fold.is_from.isoformat(),
+                "is_to": fold.is_to.isoformat(),
+                "oos_from": fold.oos_from.isoformat(),
+                "oos_to": fold.oos_to.isoformat(),
+                "auc_is": None,
+                "auc_oos": None,
+                "n_trades_oos": 0,
+                "pnl_oos": 0.0,
             }
         fold_results.append(result)
 
@@ -446,8 +494,10 @@ async def main_async(args: argparse.Namespace) -> int:
     ended_at = datetime.now(tz=UTC)
     run_id = await _persist(
         strategy=strategy,
-        started_at=started_at, ended_at=ended_at,
-        fold_results=fold_results, summary=summary,
+        started_at=started_at,
+        ended_at=ended_at,
+        fold_results=fold_results,
+        summary=summary,
         promote=args.promote_winner,
     )
     log.info("wf.persisted", run_id=run_id, promote=args.promote_winner)

@@ -20,7 +20,8 @@ class _Strat:
 
 
 class _Risk:
-    def on_trade_closed(self, pnl, *, now): pass  # noqa: D401
+    def on_trade_closed(self, pnl, *, now):
+        pass  # noqa: D401
 
 
 class _Heartbeat:
@@ -41,7 +42,8 @@ class _Exec:
 
 
 class _TG:
-    async def send(self, *_args, **_kw): pass
+    async def send(self, *_args, **_kw):
+        pass
 
 
 class _Cfg:

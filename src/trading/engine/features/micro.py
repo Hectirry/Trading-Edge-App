@@ -38,7 +38,7 @@ def realized_vol_yz(spots: Sequence[float], window_s: int) -> float:
     """
     if window_s < 2 or len(spots) < window_s + 1:
         return 0.0
-    tail = spots[-(window_s + 1):]
+    tail = spots[-(window_s + 1) :]
     rets: list[float] = []
     for i in range(1, len(tail)):
         a, b = tail[i - 1], tail[i]
@@ -56,7 +56,7 @@ def tick_up_ratio(spots: Sequence[float], window_s: int) -> float:
     """Fraction of strictly-increasing successive samples over the window."""
     if window_s < 1 or len(spots) < window_s + 1:
         return 0.0
-    tail = spots[-(window_s + 1):]
+    tail = spots[-(window_s + 1) :]
     ups = 0
     for i in range(1, len(tail)):
         if tail[i] > tail[i - 1]:

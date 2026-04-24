@@ -40,9 +40,7 @@ def vpin(
             bucket_fill += chunk
             remaining -= chunk
             if bucket_fill >= bucket_volume - 1e-9:
-                bucket_imbalances.append(
-                    abs(buy_bucket - sell_bucket) / bucket_volume
-                )
+                bucket_imbalances.append(abs(buy_bucket - sell_bucket) / bucket_volume)
                 buy_bucket = 0.0
                 sell_bucket = 0.0
                 bucket_fill = 0.0

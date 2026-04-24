@@ -59,8 +59,7 @@ async def test_ask_injects_defaults_when_no_explicit_refs(poller) -> None:
     # Find the /api/v1/llm/chat call (first post is that; any subsequent
     # reply-send posts go through _reply which is mocked separately).
     call = next(
-        c for c in poller._api_post.await_args_list
-        if c.args and c.args[0] == "/api/v1/llm/chat"
+        c for c in poller._api_post.await_args_list if c.args and c.args[0] == "/api/v1/llm/chat"
     )
     body = call.kwargs["json_body"]
     refs = body["context_refs"]
@@ -87,8 +86,7 @@ async def test_ask_defaults_survive_strategies_endpoint_failure(poller) -> None:
     poller._api_get.return_value = (503, "service down")
     await poller._handle_update(_update(111, 42, "/ask qué pasó?"))
     call = next(
-        c for c in poller._api_post.await_args_list
-        if c.args and c.args[0] == "/api/v1/llm/chat"
+        c for c in poller._api_post.await_args_list if c.args and c.args[0] == "/api/v1/llm/chat"
     )
     refs = call.kwargs["json_body"]["context_refs"]
     assert {"type": "recent_trades", "id": "*:10"} in refs

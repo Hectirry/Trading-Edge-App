@@ -147,8 +147,7 @@ async def _load_backtest(ref: ContextRef) -> LoadedContext:
         "params_hash": row["params_hash"],
         "metrics": row["metrics"],
         "top_trades": [
-            dict(r)
-            | {k: str(v) for k, v in dict(r).items() if hasattr(v, "isoformat")}
+            dict(r) | {k: str(v) for k, v in dict(r).items() if hasattr(v, "isoformat")}
             for r in trades
         ],
     }
@@ -238,9 +237,7 @@ async def _load_recent_trades(ref: ContextRef) -> LoadedContext:
                 strategy_id,
                 n,
             )
-    payload = [
-        {k: (str(v) if v is not None else None) for k, v in dict(r).items()} for r in rows
-    ]
+    payload = [{k: (str(v) if v is not None else None) for k, v in dict(r).items()} for r in rows]
     body = json.dumps(payload, ensure_ascii=False, indent=2)
     body, trunc = _budget_trim(_sanitize(body), BYTE_BUDGET["recent_trades"])
     return LoadedContext(ref=ref, body=body, truncated_bytes=trunc)

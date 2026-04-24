@@ -30,9 +30,7 @@ async def list_backtests(
         params.append(status)
     if conditions:
         query.append("WHERE " + " AND ".join(conditions))
-    query.append(
-        f"ORDER BY started_at DESC LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
-    )
+    query.append(f"ORDER BY started_at DESC LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}")
     params.extend([limit, offset])
     sql = " ".join(query)
     async with acquire() as conn:
@@ -55,7 +53,8 @@ async def backtest_trades(backtest_id: str, limit: int = 100) -> list[dict]:
             "exit_ts, exit_price, pnl, fees, edge_bps, vol_regime "
             "FROM research.backtest_trades WHERE backtest_id = $1 "
             "ORDER BY trade_idx ASC LIMIT $2",
-            uuid.UUID(backtest_id), limit,
+            uuid.UUID(backtest_id),
+            limit,
         )
     return [dict(r) for r in rows]
 

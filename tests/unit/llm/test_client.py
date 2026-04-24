@@ -115,8 +115,11 @@ async def test_usage_and_cost_surfaced() -> None:
 @pytest.mark.asyncio
 async def test_missing_api_key_raises() -> None:
     with patch.object(llm_client, "get_settings") as gs:
-        gs.return_value = type("S", (), {"openrouter_api_key": "", "llm_max_reply_tokens": 512,
-                                          "llm_request_timeout_s": 30.0})()
+        gs.return_value = type(
+            "S",
+            (),
+            {"openrouter_api_key": "", "llm_max_reply_tokens": 512, "llm_request_timeout_s": 30.0},
+        )()
         with pytest.raises(LLMError):
             await chat_completion(
                 model="qwen/qwen3-max",

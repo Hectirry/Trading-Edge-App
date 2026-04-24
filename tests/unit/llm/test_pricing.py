@@ -18,10 +18,10 @@ def test_unknown_model_rejected() -> None:
 @pytest.mark.parametrize(
     "model, tok_in, tok_out, expected",
     [
-        ("qwen/qwen3-max",                 1_000_000, 1_000_000, 4.68),   # 0.78 + 3.90
-        ("anthropic/claude-sonnet-4.6",    1_000_000, 1_000_000, 18.00),  # 3 + 15
-        ("anthropic/claude-opus-4.6",      1_000_000, 1_000_000, 30.00),  # 5 + 25
-        ("openai/gpt-4o-mini",             1_000_000, 1_000_000, 0.75),
+        ("qwen/qwen3-max", 1_000_000, 1_000_000, 4.68),  # 0.78 + 3.90
+        ("anthropic/claude-sonnet-4.6", 1_000_000, 1_000_000, 18.00),  # 3 + 15
+        ("anthropic/claude-opus-4.6", 1_000_000, 1_000_000, 30.00),  # 5 + 25
+        ("openai/gpt-4o-mini", 1_000_000, 1_000_000, 0.75),
         ("meta-llama/llama-3.3-70b-instruct", 1_000_000, 1_000_000, 0.42),
     ],
 )

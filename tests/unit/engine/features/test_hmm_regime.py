@@ -45,15 +45,13 @@ def test_build_feature_matrix_skips_non_positive() -> None:
 
 def test_canonical_label_order_assigns_all_four() -> None:
     means = [
-        (0.001, 0.005),   # low vol, mild positive → maybe bull
+        (0.001, 0.005),  # low vol, mild positive → maybe bull
         (-0.002, 0.006),  # low vol, negative → bear
-        (0.0, 0.004),     # lowest vol, neutral → ranging
-        (0.0, 0.05),      # highest vol → high_vol
+        (0.0, 0.004),  # lowest vol, neutral → ranging
+        (0.0, 0.05),  # highest vol → high_vol
     ]
     labels = canonical_label_order(means)
-    assert sorted(labels) == sorted(
-        ["trending_bull", "trending_bear", "ranging", "high_vol"]
-    )
+    assert sorted(labels) == sorted(["trending_bull", "trending_bear", "ranging", "high_vol"])
 
 
 def test_canonical_label_order_highest_vol_to_high_vol() -> None:
@@ -61,7 +59,7 @@ def test_canonical_label_order_highest_vol_to_high_vol() -> None:
         (0.001, 0.01),
         (-0.001, 0.01),
         (0.0, 0.008),
-        (0.002, 0.05),   # clearly highest vol
+        (0.002, 0.05),  # clearly highest vol
     ]
     labels = canonical_label_order(means)
     assert labels[3] == "high_vol"

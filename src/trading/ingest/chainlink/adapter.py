@@ -58,7 +58,8 @@ async def run_chainlink_loop() -> None:
                         log.error(
                             "chainlink.feed_stale",
                             source=type(watcher).__name__,
-                            age_s=age_s, streak=stale_streak,
+                            age_s=age_s,
+                            streak=stale_streak,
                             round_id=int(snap.round_id),
                         )
                         stale_alert_fired = True
@@ -66,7 +67,8 @@ async def run_chainlink_loop() -> None:
                     if stale_streak >= MAX_STALE_STREAK and stale_alert_fired:
                         log.info(
                             "chainlink.feed_recovered",
-                            source=type(watcher).__name__, age_s=age_s,
+                            source=type(watcher).__name__,
+                            age_s=age_s,
                         )
                     stale_streak = 0
                     stale_alert_fired = False
@@ -82,8 +84,7 @@ async def run_chainlink_loop() -> None:
                 )
                 await upsert_many(
                     "market_data.chainlink_updates",
-                    ["ts", "feed", "round_id", "answer",
-                     "updated_at", "age_s", "source"],
+                    ["ts", "feed", "round_id", "answer", "updated_at", "age_s", "source"],
                     [row],
                     ["feed", "round_id"],
                 )

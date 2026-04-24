@@ -81,7 +81,8 @@ class Settings(BaseSettings):
     chainlink_datastreams_key: str = Field(
         default="",
         validation_alias=AliasChoices(
-            "TEA_CHAINLINK_DATASTREAMS_KEY", "CHAINLINK_DATASTREAMS_KEY",
+            "TEA_CHAINLINK_DATASTREAMS_KEY",
+            "CHAINLINK_DATASTREAMS_KEY",
         ),
     )
     chainlink_datastreams_url: str = "https://api.dataengine.chain.link"
@@ -92,7 +93,8 @@ class Settings(BaseSettings):
     alchemy_polygon_url: str = Field(
         default="",
         validation_alias=AliasChoices(
-            "TEA_ALCHEMY_POLYGON_URL", "ALCHEMY_POLYGON_URL",
+            "TEA_ALCHEMY_POLYGON_URL",
+            "ALCHEMY_POLYGON_URL",
         ),
     )
     chainlink_eac_btcusd_polygon: str = "0xc907E116054Ad103354f2D350FD2514433D57F6f"
@@ -100,7 +102,8 @@ class Settings(BaseSettings):
     coinalyze_api_key: str = Field(
         default="",
         validation_alias=AliasChoices(
-            "TEA_COINALYZE_API_KEY", "COINALYZE_API_KEY",
+            "TEA_COINALYZE_API_KEY",
+            "COINALYZE_API_KEY",
         ),
     )
     coinalyze_base_url: str = "https://api.coinalyze.net/v1"

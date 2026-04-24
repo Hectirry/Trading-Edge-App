@@ -33,7 +33,10 @@ class CoinalyzeClient:
     interval: str = "1min"
 
     async def liquidation_history(
-        self, *, since_ts: int, until_ts: int,
+        self,
+        *,
+        since_ts: int,
+        until_ts: int,
     ) -> list[dict] | None:
         settings = get_settings()
         if not settings.coinalyze_api_key:
@@ -54,7 +57,9 @@ class CoinalyzeClient:
             return None
         if r.status_code != 200:
             log.warning(
-                "coinalyze.non_200", status=r.status_code, body=r.text[:200],
+                "coinalyze.non_200",
+                status=r.status_code,
+                body=r.text[:200],
             )
             return None
         try:
@@ -86,26 +91,34 @@ def _expand_bars_to_clusters(
             ts = bar.get("t")
             if ts is None:
                 continue
-            long_amt = float(bar.get("l") or 0.0)   # long liquidations $
+            long_amt = float(bar.get("l") or 0.0)  # long liquidations $
             short_amt = float(bar.get("s") or 0.0)  # short liquidations $
             price_proxy = bar.get("p") or current_spot
             if price_proxy is None:
                 continue
             ts_dt = datetime.fromtimestamp(int(ts), tz=UTC)
             if long_amt > 0:
-                out.append((
-                    ts_dt, symbol, "long",
-                    Decimal(str(price_proxy)),
-                    Decimal(str(long_amt)),
-                    "coinalyze",
-                ))
+                out.append(
+                    (
+                        ts_dt,
+                        symbol,
+                        "long",
+                        Decimal(str(price_proxy)),
+                        Decimal(str(long_amt)),
+                        "coinalyze",
+                    )
+                )
             if short_amt > 0:
-                out.append((
-                    ts_dt, symbol, "short",
-                    Decimal(str(price_proxy)),
-                    Decimal(str(short_amt)),
-                    "coinalyze",
-                ))
+                out.append(
+                    (
+                        ts_dt,
+                        symbol,
+                        "short",
+                        Decimal(str(price_proxy)),
+                        Decimal(str(short_amt)),
+                        "coinalyze",
+                    )
+                )
     return out
 
 
@@ -121,7 +134,8 @@ async def run_liquidation_loop() -> None:
         try:
             now_ts = int(time.time())
             payload = await client.liquidation_history(
-                since_ts=now_ts - 300, until_ts=now_ts,
+                since_ts=now_ts - 300,
+                until_ts=now_ts,
             )
             rows = _expand_bars_to_clusters(payload, current_spot=None)
             if rows:
