@@ -1,0 +1,27 @@
+# grid_atr_adaptive_v1 — BTC/USDT ATR-sized grid (Phase 3.8a).
+#
+# Step = ATR(14) * multiplier on 1m bars; rebuilds the grid when the new
+# ATR-derived step deviates from the last applied step by >20%.
+# ``step`` below is only the *seed*; it's overwritten on the first
+# rebuild once ATR is ready.
+
+name = "grid_atr_adaptive_v1_btc"
+description = "ATR-adaptive grid, BTC/USDT spot Binance."
+
+strategy_id = "grid_atr_adaptive_v1_btc"
+instrument_id = "BTCUSDT.BINANCE"
+
+[params]
+step = 400.0                      # seed; first ATR rebuild replaces it
+geometric = false
+n_below = 15
+n_above = 15
+qty_per_level = 0.001
+stop_loss_pct = 0.15
+atr_period = 14
+atr_multiplier = 0.5
+recompute_delta_pct = 0.20
+
+[paper]
+capital_usd = 1000.0
+maker_fee_bps = 10.0

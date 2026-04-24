@@ -53,6 +53,56 @@ params_file = "config/strategies/contest_ensemble_v1.toml"
 enabled = true
 params_file = "config/strategies/contest_avengers_v1.toml"
 
+[strategies.grid_static_v1_btc]
+# Phase 3.8a smoke. Runs under the continuous-strategy driver
+# (paper/driver_continuous.py), which is separate from the
+# Polymarket-oriented paper driver. Kept disabled until 3.8b wires the
+# continuous driver into the tea-engine service entry point.
+enabled = false
+kind = "continuous"
+params_file = "config/strategies/grid/grid_static_v1_btc.toml"
+
+[strategies.grid_static_v1_eth]
+enabled = false
+kind = "continuous"
+params_file = "config/strategies/grid/grid_static_v1_eth.toml"
+
+[strategies.grid_static_v1_sol]
+# Requires SOL ingestion live (see cli/ingestor.py SOLUSDT entries).
+enabled = false
+kind = "continuous"
+params_file = "config/strategies/grid/grid_static_v1_sol.toml"
+
+[strategies.grid_dgt_v1_btc]
+enabled = false
+kind = "continuous"
+params_file = "config/strategies/grid/grid_dgt_v1_btc.toml"
+
+[strategies.grid_dgt_v1_eth]
+enabled = false
+kind = "continuous"
+params_file = "config/strategies/grid/grid_dgt_v1_eth.toml"
+
+[strategies.grid_dgt_v1_sol]
+enabled = false
+kind = "continuous"
+params_file = "config/strategies/grid/grid_dgt_v1_sol.toml"
+
+[strategies.grid_atr_adaptive_v1_btc]
+enabled = false
+kind = "continuous"
+params_file = "config/strategies/grid/grid_atr_adaptive_v1_btc.toml"
+
+[strategies.grid_atr_adaptive_v1_eth]
+enabled = false
+kind = "continuous"
+params_file = "config/strategies/grid/grid_atr_adaptive_v1_eth.toml"
+
+[strategies.grid_atr_adaptive_v1_sol]
+enabled = false
+kind = "continuous"
+params_file = "config/strategies/grid/grid_atr_adaptive_v1_sol.toml"
+
 [deployment]
 service = "tea-engine"
 # staging: no confirmation file required.

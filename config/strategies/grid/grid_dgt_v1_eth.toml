@@ -1,0 +1,19 @@
+# grid_dgt_v1 — ETH/USDT Dynamic Grid Trading (Phase 3.8a).
+
+name = "grid_dgt_v1_eth"
+description = "Dynamic Grid Trading, ETH/USDT spot Binance."
+
+strategy_id = "grid_dgt_v1_eth"
+instrument_id = "ETHUSDT.BINANCE"
+
+[params]
+step = 0.005
+geometric = true
+n_below = 15
+n_above = 15
+qty_per_level = 0.02
+stop_loss_pct = 0.15
+
+[paper]
+capital_usd = 1000.0
+maker_fee_bps = 10.0

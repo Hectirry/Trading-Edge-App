@@ -17,8 +17,8 @@ from trading.ingest.polymarket.slug import SLUG_PREFIX
 log = get_logger("cli.ingestor")
 
 INTERVALS = ["1m", "5m", "15m", "1h", "1d"]
-CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT"]
-TRADE_SYMBOLS = ["BTCUSDT"]
+CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+TRADE_SYMBOLS = ["BTCUSDT", "SOLUSDT"]
 POLYMARKET_DISCOVERY_LOOKBACK = timedelta(days=30)
 
 

@@ -5,6 +5,6 @@ uses only the data provided in its arguments; tests enforce that
 future ticks never leak into an earlier ``as_of_ts``.
 """
 
-from trading.engine.features import jumps, macro, micro, microprice, mlofi, vpin
+from trading.engine.features import atr, jumps, macro, micro, microprice, mlofi, vpin
 
-__all__ = ["jumps", "macro", "micro", "microprice", "mlofi", "vpin"]
+__all__ = ["atr", "jumps", "macro", "micro", "microprice", "mlofi", "vpin"]

@@ -1,0 +1,21 @@
+# grid_dgt_v1 — SOL/USDT Dynamic Grid Trading (Phase 3.8a).
+#
+# NOTE: requires SOL ingestion live before enabling.
+
+name = "grid_dgt_v1_sol"
+description = "Dynamic Grid Trading, SOL/USDT spot Binance."
+
+strategy_id = "grid_dgt_v1_sol"
+instrument_id = "SOLUSDT.BINANCE"
+
+[params]
+step = 0.005
+geometric = true
+n_below = 15
+n_above = 15
+qty_per_level = 0.25
+stop_loss_pct = 0.15
+
+[paper]
+capital_usd = 1000.0
+maker_fee_bps = 10.0
