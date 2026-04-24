@@ -52,7 +52,7 @@ def poller():
 async def test_ask_injects_defaults_when_no_explicit_refs(poller) -> None:
     poller._api_get.return_value = (
         200,
-        {"strategies": [{"name": "imbalance_v3"}, {"name": "trend_confirm_t1_v1"}]},
+        {"strategies": [{"name": "trend_confirm_t1_v1"}, {"name": "trend_confirm_t1_v1"}]},
     )
     await poller._handle_update(_update(111, 42, "/ask cómo vamos?"))
     poller._api_post.assert_awaited()
@@ -65,7 +65,7 @@ async def test_ask_injects_defaults_when_no_explicit_refs(poller) -> None:
     refs = body["context_refs"]
     types_ids = {(r["type"], r["id"]) for r in refs}
     assert ("recent_trades", "*:10") in types_ids
-    assert ("paper_stats", "imbalance_v3:7") in types_ids
+    assert ("paper_stats", "trend_confirm_t1_v1:7") in types_ids
     assert ("paper_stats", "trend_confirm_t1_v1:7") in types_ids
 
 

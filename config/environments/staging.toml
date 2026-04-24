@@ -21,10 +21,6 @@ reconciliation_interval_s = 300
 
 paper_ticks_retention_days = 30
 
-[strategies.imbalance_v3]
-enabled = true
-params_file = "config/strategies/pbt5m_imbalance_v3.toml"
-
 [strategies.trend_confirm_t1_v1]
 enabled = true
 params_file = "config/strategies/pbt5m_trend_confirm_t1_v1.toml"

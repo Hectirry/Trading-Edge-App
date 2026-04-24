@@ -7,8 +7,8 @@ from trading.paper.exec_client import (
 
 
 def test_client_order_id_deterministic():
-    a = _client_order_id("imbalance_v3", "btc-updown-5m-1", 1234.5, Side.YES_UP)
-    b = _client_order_id("imbalance_v3", "btc-updown-5m-1", 1234.5, Side.YES_UP)
+    a = _client_order_id("trend_confirm_t1_v1", "btc-updown-5m-1", 1234.5, Side.YES_UP)
+    b = _client_order_id("trend_confirm_t1_v1", "btc-updown-5m-1", 1234.5, Side.YES_UP)
     assert a == b
     assert len(a) == 16
 

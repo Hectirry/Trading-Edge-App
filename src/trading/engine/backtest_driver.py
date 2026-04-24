@@ -180,9 +180,8 @@ def run_backtest(
             # (snapshots[:i]). trend_confirm_t1_v1's AFML features need
             # up to cusum_lookback=120 spot prices; a 30-tick slice would
             # zero them out and change the decision vector. Strategies that
-            # only want a recent slice already apply `[-30:]` inline
-            # (e.g., imbalance_v3 depth_trend check), so passing the full
-            # list is backward-compatible.
+            # only want a recent slice apply `[-30:]` inline, so passing
+            # the full list is backward-compatible.
             ctx.recent_ticks = list(recent_ctxs)
             recent_ctxs.append(ctx)
 
@@ -280,12 +279,10 @@ def run_backtest(
             if not bypass_risk:
                 risk_manager.on_trade_closed(pnl, now=close_ts_market)
             # NOTE on parity: polybot's backtest does NOT call
-            # strategy.on_trade_resolved (see core/backtest.py). This means the
-            # imbalance_v3 streak pause never fires in polybot backtests, even
-            # though it fires in live. We mirror that behavior here for
-            # bit-exact parity with the reference JSON. Phase 3 will decide
-            # whether to fix the discrepancy (by making backtest call this
-            # hook too) or leave it as a documented divergence.
+            # strategy.on_trade_resolved (see core/backtest.py). Streak-based
+            # pauses that fire in live therefore never fire in polybot
+            # backtests. We mirror that behavior here for bit-exact parity
+            # with the reference JSON.
 
     strategy.on_stop()
 

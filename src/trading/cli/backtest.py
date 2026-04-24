@@ -2,8 +2,8 @@
 
 Usage:
   python -m trading.cli.backtest \
-    --strategy polymarket_btc5m/imbalance_v3 \
-    --params config/strategies/pbt5m_imbalance_v3.toml \
+    --strategy polymarket_btc5m/trend_confirm_t1_v1 \
+    --params config/strategies/pbt5m_trend_confirm_t1_v1.toml \
     --from 2026-04-17T15:05:19Z --to 2026-04-21T23:59:59Z \
     --source polybot_sqlite \
     --polybot-db /polybot-btc5m-data/polybot.db
@@ -39,10 +39,6 @@ def _parse_ts(s: str) -> datetime:
 
 
 def _load_strategy(name: str, config: dict):
-    if name == "polymarket_btc5m/imbalance_v3":
-        from trading.strategies.polymarket_btc5m.imbalance_v3 import ImbalanceV3
-
-        return ImbalanceV3(config=config)
     if name == "polymarket_btc5m/trend_confirm_t1_v1":
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import (
             TrendConfirmT1V1,

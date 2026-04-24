@@ -2,10 +2,10 @@
 
 One entry point for every strategy. Two execution paths:
 
-- **Rules-based** (``imbalance_v3``, ``trend_confirm_t1_v1``,
-  ``last_90s_forecaster_v1``, ``contest_avengers_v1``) runs the
-  Phase-2 ``run_walk_forward`` replay infrastructure over polybot
-  SQLite dumps — deterministic trade replay, PnL + verdict per fold.
+- **Rules-based** (``trend_confirm_t1_v1``, ``last_90s_forecaster_v1``,
+  ``contest_avengers_v1``) runs the Phase-2 ``run_walk_forward`` replay
+  infrastructure over polybot SQLite dumps — deterministic trade replay,
+  PnL + verdict per fold.
 - **ML-based** (``hmm_regime_btc5m``, ``last_90s_forecaster_v2``,
   ``contest_ensemble_v1``) refits the model on each IS window and
   evaluates AUC / Brier on the OOS window via the new
@@ -27,8 +27,8 @@ Usage::
 
     # Rules — replay
     docker compose exec tea-engine python -m trading.cli.walk_forward \\
-        --strategy imbalance_v3 \\
-        --params config/strategies/pbt5m_imbalance_v3.toml \\
+        --strategy trend_confirm_t1_v1 \\
+        --params config/strategies/pbt5m_trend_confirm_t1_v1.toml \\
         --from 2026-01-01 --to 2026-04-20 \\
         --polybot-db /polybot-btc5m-data/polybot.db
 """
@@ -61,7 +61,6 @@ ML_STRATEGIES = {
 }
 
 RULE_STRATEGIES = {
-    "imbalance_v3",
     "trend_confirm_t1_v1",
     "last_90s_forecaster_v1",
     "contest_avengers_v1",
@@ -348,10 +347,6 @@ def _replay_rules_fold(
 
 
 def _rules_factory(strategy: str, cfg: dict):
-    if strategy == "imbalance_v3":
-        from trading.strategies.polymarket_btc5m.imbalance_v3 import ImbalanceV3
-
-        return lambda: ImbalanceV3(config=cfg)
     if strategy == "trend_confirm_t1_v1":
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import TrendConfirmT1V1
 

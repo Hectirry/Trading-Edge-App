@@ -109,10 +109,6 @@ async def _load_strategy(
     chainlink_provider=None,
     liq_provider=None,
 ) -> StrategyBase:
-    if name == "imbalance_v3":
-        from trading.strategies.polymarket_btc5m.imbalance_v3 import ImbalanceV3
-
-        return ImbalanceV3(config=cfg)
     if name == "trend_confirm_t1_v1":
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import TrendConfirmT1V1
 

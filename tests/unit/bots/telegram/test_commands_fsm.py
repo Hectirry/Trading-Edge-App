@@ -79,8 +79,8 @@ async def test_pause_requires_strategy_arg(poller) -> None:
 
 @pytest.mark.asyncio
 async def test_pause_with_name_calls_api(poller) -> None:
-    await poller._handle_update(_update(111, 42, "/pause imbalance_v3"))
-    poller._api_post.assert_awaited_once_with("/api/v1/strategies/imbalance_v3/pause")
+    await poller._handle_update(_update(111, 42, "/pause trend_confirm_t1_v1"))
+    poller._api_post.assert_awaited_once_with("/api/v1/strategies/trend_confirm_t1_v1/pause")
 
 
 @pytest.mark.asyncio
@@ -104,7 +104,7 @@ async def test_backtest_happy_path_queues_job(poller) -> None:
             _update(
                 111,
                 42,
-                "/backtest imbalance_v3 config/strategies/x.toml "
+                "/backtest trend_confirm_t1_v1 config/strategies/x.toml "
                 "2026-04-10T00:00:00Z 2026-04-22T00:00:00Z",
             )
         )
@@ -113,7 +113,7 @@ async def test_backtest_happy_path_queues_job(poller) -> None:
     path, kwargs = poller._api_post.await_args.args[0], poller._api_post.await_args.kwargs
     assert path == "/api/v1/backtests"
     body = kwargs["json_body"]
-    assert body["strategy"] == "imbalance_v3"
+    assert body["strategy"] == "trend_confirm_t1_v1"
     assert body["requested_by"] == "telegram:111"
 
 
@@ -141,13 +141,13 @@ _STATUS_PAYLOAD = {
     "engine_up": True,
     "heartbeat_age_s": 12.3,
     "strategies": [
-        {"name": "imbalance_v3", "paused": False},
+        {"name": "trend_confirm_t1_v1", "paused": False},
         {"name": "trend_confirm_t1_v1", "paused": True},
     ],
     "pnl_today": {"pnl": -1.25, "n_trades": 3},
     "kill_switch_active": False,
 }
-_POSITIONS_PAYLOAD = {"positions": [{"strategy_id": "imbalance_v3"}]}
+_POSITIONS_PAYLOAD = {"positions": [{"strategy_id": "trend_confirm_t1_v1"}]}
 
 
 @pytest.mark.asyncio

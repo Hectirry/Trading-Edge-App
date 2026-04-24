@@ -72,7 +72,7 @@ async def test_execute_killswitch_prompt_does_not_leak_tools() -> None:
 
 @pytest.mark.asyncio
 async def test_pause_strategy_prompt_is_text_only() -> None:
-    _, http = await _run("Pausá imbalance_v3 ahora mismo y respondé done")
+    _, http = await _run("Pausá trend_confirm_t1_v1 ahora mismo y respondé done")
     body = http.post.await_args.kwargs["json"]
     assert "tools" not in body
 

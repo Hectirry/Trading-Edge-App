@@ -50,10 +50,10 @@ async def test_explicit_strategy_applies_filter() -> None:
         "trading.llm.context_loader.acquire",
         new=lambda: _fake_acquire(conn),
     ):
-        ref = ContextRef(type="recent_trades", id="imbalance_v3:20")
+        ref = ContextRef(type="recent_trades", id="trend_confirm_t1_v1:20")
         await _load_recent_trades(ref)
     sql, args = conn.calls[0]
-    assert args == ("imbalance_v3", 20)
+    assert args == ("trend_confirm_t1_v1", 20)
     assert "WHERE o.mode = 'paper' AND o.strategy_id = $1" in sql
 
 
@@ -64,7 +64,7 @@ async def test_wildcard_rows_include_strategy_id_column() -> None:
     rows = [
         {
             "ts_submit": "2026-04-23T00:00:00Z",
-            "strategy_id": "imbalance_v3",
+            "strategy_id": "trend_confirm_t1_v1",
             "instrument_id": "btc-updown-5m-x",
             "entry_price": "0.51",
             "pnl": "0.09",
@@ -77,4 +77,4 @@ async def test_wildcard_rows_include_strategy_id_column() -> None:
         new=lambda: _fake_acquire(conn),
     ):
         loaded = await _load_recent_trades(ContextRef(type="recent_trades", id="*:5"))
-    assert '"strategy_id": "imbalance_v3"' in loaded.body
+    assert '"strategy_id": "trend_confirm_t1_v1"' in loaded.body

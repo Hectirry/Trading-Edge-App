@@ -1,9 +1,9 @@
 """Technical indicators + Black-Scholes binary probability.
 
-Literal port of /home/coder/polybot-btc5m/core/indicators.py. Required by the
-imbalance_v3 backtest to recompute model_prob_yes / edge / z_score fresh per
-market (polybot does the same — the values stored in the `ticks` table are
-live-time captures and cannot be reused offline without drift).
+Literal port of /home/coder/polybot-btc5m/core/indicators.py. The
+backtest driver recomputes model_prob_yes / edge / z_score fresh per
+market — the values stored in the `ticks` table are live-time captures
+and cannot be reused offline without drift.
 """
 
 from __future__ import annotations

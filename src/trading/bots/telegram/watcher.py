@@ -82,25 +82,15 @@ class Watcher:
             await asyncio.sleep(60)
 
     async def run_weekly_comparison(self) -> None:
-        """Every 5 min check; fire paper_vs_backtest on Sundays at 01:00 UTC
-        and the contest A/B digest on Sundays at 12:00 UTC.
+        """Every 5 min check; fire the contest A/B digest on Sundays at
+        12:00 UTC.
         """
         log.info("watcher.weekly_comparison.started")
-        fired_for_week_pvb: str = ""
         fired_for_week_ab: str = ""
         while True:
             now = datetime.now(tz=UTC)
             # weekday(): Monday=0 ... Sunday=6
             iso_week = now.strftime("%G-W%V")
-            if now.weekday() == 6 and now.hour == 1 and fired_for_week_pvb != iso_week:
-                fired_for_week_pvb = iso_week
-                log.info("watcher.weekly_comparison.firing", week=iso_week)
-                proc = await asyncio.create_subprocess_exec(
-                    "python",
-                    "-m",
-                    "trading.cli.paper_vs_backtest",
-                )
-                await proc.wait()
             if now.weekday() == 6 and now.hour == 12 and fired_for_week_ab != iso_week:
                 fired_for_week_ab = iso_week
                 log.info("watcher.contest_ab.firing", week=iso_week)
@@ -126,7 +116,6 @@ class Watcher:
             "hmm_regime_btc5m",
             "last_90s_forecaster_v2",
             "contest_ensemble_v1",
-            "imbalance_v3",
             "trend_confirm_t1_v1",
             "last_90s_forecaster_v1",
             "contest_avengers_v1",
