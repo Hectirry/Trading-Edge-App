@@ -22,6 +22,8 @@ churn seen in the initial backtest):
 
 from __future__ import annotations
 
+from collections import deque
+
 from trading.engine.continuous_strategy_base import Action, Bar, Reset
 from trading.engine.features.atr import ATR
 from trading.strategies.grid.grid_base import GridBase
@@ -38,6 +40,11 @@ class GridAtrAdaptiveV1(GridBase):
         self.recompute_delta_pct: float = float(p.get("recompute_delta_pct", 0.40))
         self.atr_bar_window_s: float = float(p.get("atr_bar_window_s", 900.0))
         self.rebuild_cooldown_s: float = float(p.get("rebuild_cooldown_s", 3600.0))
+        # 3.8a.2 trend gate — skip rebuild when |1h return| exceeds the
+        # threshold so strong directional moves don't keep replacing the
+        # grid at lower/higher prices (only to see it breach again).
+        self.trend_gate_1h_pct: float = float(p.get("trend_gate_1h_pct", 0.0))
+        self._closes_1h: deque[float] = deque(maxlen=60)
         self._atr = ATR(period=self.atr_period)
         self._last_step: float = float(self.step)
         self._last_rebuild_ts: float = 0.0
@@ -82,7 +89,17 @@ class GridAtrAdaptiveV1(GridBase):
             return agg
         return None
 
+    def _trending_too_hard(self) -> bool:
+        if self.trend_gate_1h_pct <= 0 or len(self._closes_1h) < 60:
+            return False
+        first = self._closes_1h[0]
+        last = self._closes_1h[-1]
+        if first <= 0:
+            return False
+        return abs(last - first) / first > self.trend_gate_1h_pct
+
     def on_bar_1m(self, bar: Bar) -> list[Action]:
+        self._closes_1h.append(bar.close)
         agg = self._maybe_emit_aggregate(bar)
         if agg is None:
             return []
@@ -99,6 +116,8 @@ class GridAtrAdaptiveV1(GridBase):
             self.rebuild_cooldown_s > 0
             and (agg.ts_close - self._last_rebuild_ts) < self.rebuild_cooldown_s
         ):
+            return []
+        if self._trending_too_hard():
             return []
         self.step = new_step
         self._last_step = new_step
