@@ -38,11 +38,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import logging
 import sys
 import uuid
 from datetime import UTC, datetime
 
+from trading.common.logging import configure_logging, get_logger
 from trading.research.walk_forward import (
     FoldWindow,
     aggregate_verdicts,
@@ -50,8 +50,8 @@ from trading.research.walk_forward import (
     classify_fold,
 )
 
-log = logging.getLogger("cli.walk_forward")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+configure_logging()
+log = get_logger("cli.walk_forward")
 
 
 ML_STRATEGIES = {
@@ -114,14 +114,26 @@ async def _eval_hmm_fold(fold: FoldWindow) -> dict:
 
     import numpy as np
     from hmmlearn import hmm as hmmlib
+    from numpy.linalg import LinAlgError
 
     features = build_feature_matrix(closes)
     X = np.asarray(features, dtype=np.float64)
+    # `full` covariance is the production choice (see train_hmm_regime)
+    # but needs 100+ d of data to stay positive-definite. Under WF with
+    # 5-day IS windows we routinely hit numerical errors, so fall back
+    # to `diag` for the fold fit only. Production models keep `full`.
     model = hmmlib.GaussianHMM(
         n_components=4, covariance_type="full",
         n_iter=100, tol=1e-4, random_state=42,
     )
-    model.fit(X)
+    try:
+        model.fit(X)
+    except (LinAlgError, ValueError):
+        model = hmmlib.GaussianHMM(
+            n_components=4, covariance_type="diag",
+            n_iter=100, tol=1e-4, random_state=42,
+        )
+        model.fit(X)
     score_is = float(model.score(X))
 
     oos_closes = _fetch_closes(
