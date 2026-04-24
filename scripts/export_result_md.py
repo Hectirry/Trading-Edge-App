@@ -20,7 +20,7 @@ from pathlib import Path
 
 import asyncpg
 
-OUT_ROOT = Path("estrategias/resultados")
+OUT_ROOT = Path(__file__).resolve().parent.parent / "estrategias" / "resultados"
 
 VERDICT_RULES = {
     "OK": lambda m: (
@@ -64,7 +64,7 @@ async def fetch_latest(strategy: str | None) -> dict:
         await conn.close()
 
 
-def render(row: dict) -> tuple[str, str]:
+def render(row: dict) -> tuple[str, str, str]:
     import json
 
     metrics = row["metrics"]
@@ -83,12 +83,14 @@ def render(row: dict) -> tuple[str, str]:
     v = verdict(m)
     strat_name = row["strategy_name"]
     short_name = strat_name.split("/")[-1]
-    started = row["started_at"].astimezone(UTC)
+    started = row["started_at"].astimezone(UTC).replace(microsecond=0)
     ymd = started.strftime("%Y-%m-%d")
+    started_iso = started.isoformat()
+    commit_short = (row["strategy_commit"] or "")[:8]
     body = f"""# backtest — {strat_name}
 
-Fecha corrida: {started.isoformat()}
-Commit: {row["strategy_commit"]}
+Fecha corrida: {started_iso}
+Commit: {commit_short}
 Params hash: {row["params_hash"]}
 Ventana datos: {row["dataset_from"].isoformat()} → {row["dataset_to"].isoformat()}
 Fuente: {row["data_source"]}
@@ -118,7 +120,7 @@ _(vacío — Claude edita este bloque al leer el resultado si hay algo no-obvio)
 
 - HTML: `{row["report_path"] or "(no generado)"}`
 - DB: `SELECT * FROM research.backtest_trades WHERE backtest_id = '{row["id"]}';`
-- Grafana: `/grafana` → backtests → `started_at = {started.isoformat()}`
+- Grafana: `/grafana` → backtests → `started_at = {started_iso}`
 """
     return short_name, ymd, body
 

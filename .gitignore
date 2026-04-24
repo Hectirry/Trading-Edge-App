@@ -19,6 +19,7 @@ build/
 node_modules/
 *.log
 /logs/
+src/trading/research/reports/
 .DS_Store
 .idea/
 .vscode/

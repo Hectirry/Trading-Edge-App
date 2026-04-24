@@ -34,10 +34,25 @@ Estas reglas son vinculantes. Cada sesión empieza y termina siguiéndolas.
 
 ### 1. Al inicio de la sesión, Claude lee en este orden
 
-1. `estrategias/resultados/_last_run_status.md` — **primero siempre**. Si
-   status es `FAIL`, avisar al usuario inmediatamente antes de hacer
-   cualquier otra cosa; la prioridad de la sesión cambia a "investigar
-   el fallo del VPS", no a iterar estrategias.
+1. `estrategias/resultados/_last_run_status.md` — **primero siempre**.
+
+   **REGLA TAJANTE.** Si se cumple cualquiera de estas dos condiciones:
+   - el campo `Status:` dice `FAIL`, **o**
+   - el campo `Timestamp:` tiene más de **36h** de antigüedad respecto al
+     momento actual (cron no corrió, o el VPS está caído),
+
+   entonces Claude **NO debe leer ningún otro archivo** ni avanzar en la
+   sesión hasta que el usuario confirme explícitamente que vio el problema
+   y quiere continuar. En ese caso:
+   1. Mostrar al usuario el contenido crudo del status file (incluyendo
+      `tail 20` de stderr si lo trae).
+   2. Esperar confirmación explícita del usuario ("seguir", "ignorar",
+      "investigar", etc.). El silencio no es confirmación.
+   3. Recién tras confirmación, pasar al punto 2 de esta lista.
+
+   Si el status es `OK` y el timestamp es reciente (<36h), continuar
+   directamente al punto 2 sin interrumpir al usuario.
+
 2. `estrategias/INDICE.md` (una línea por estrategia, estado + último resultado).
 3. **Sólo** los `.md` que el usuario pida o que el INDICE marque como
    prioritarios para esa sesión. No leer la carpeta entera.
@@ -48,6 +63,12 @@ Estas reglas son vinculantes. Cada sesión empieza y termina siguiéndolas.
 
 **No leer** `src/` ni `config/` salvo que la conversación lo requiera.
 El `.md` de la estrategia debe contener lo suficiente para razonar sobre ella.
+
+**Sobre `logs/vps-daily.log`:** por defecto **no leer**. Excepciones:
+- El usuario lo pide explícitamente.
+- El status file dice `FAIL` y el `tail 20` incluido **no alcanza** para
+  diagnosticar la causa; en ese caso leer sólo el bloque del último run
+  (acotado por timestamp) — no el archivo entero.
 
 ### 2. Crear una estrategia nueva
 
