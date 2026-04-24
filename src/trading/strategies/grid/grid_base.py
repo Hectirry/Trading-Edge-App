@@ -1,17 +1,22 @@
-"""Shared base class for grid-trading strategies (ADR 3.8a).
+"""Shared base class for grid-trading strategies (ADR 3.8a / 3.8a.1).
 
 Owns
 ----
 * grid level computation (arithmetic or geometric step sizing)
-* deterministic client_order_id generation via ``deterministic_coid``
-* realized-PnL bookkeeping across reset generations
-* stop-loss gate (absolute % below initial center — NOT trailing, per plan)
-* pair-offset placement on fill (BUY fill → place opposite SELL above, etc.)
+* deterministic ``client_order_id`` generation via ``deterministic_coid``
+* spot-valid initial placement: BUY-only mode (``buy_only=True``) emits
+  only BUYs below center at start — the SELL leg of each pair is posted
+  by ``on_fill`` at the mirrored level. Symmetric mode keeps the legacy
+  behaviour (BUYs + SELLs placed at start) for reference / tests.
+* stop-loss gate anchored to ``state.center_price`` (not ``initial_center``)
+  so DGT resets move the floor with the new centre.
+* round-trip realised-PnL bookkeeping.
 
-Subclasses implement policy (when/how to reset, whether to gate by
-regime, how to size steps). ``GridBase.on_trade_tick`` handles the
-stop-loss check only; subclasses that override it must call
-``super().on_trade_tick`` and merge the returned actions.
+Sprint 3.8a.1 fixes:
+    1. ``buy_only`` flag removes phantom-short SELLs at start.
+    2. SL uses current centre_price, not initial_centre.
+    3. Paired SELL on BUY fill emits at level +k (mirrored on current
+       centre) when ``buy_only=True``.
 """
 
 from __future__ import annotations
@@ -43,6 +48,9 @@ class GridState:
     initial_center: float = 0.0
     stopped_out: bool = False
     last_fill_by_level: dict[int, str] = field(default_factory=dict)
+    # Tracks open SELL orders by level_idx so we don't double-place when
+    # a BUY re-fills on a second trip through the same level.
+    open_sells_by_level: set[int] = field(default_factory=set)
 
 
 def compute_levels(
@@ -79,7 +87,8 @@ class GridBase(ContinuousStrategyBase):
 
     * ``_initial_center`` — center at start
     * ``_grid_levels``    — compute levels given current state
-    * (optional) ``on_trade_tick`` / ``on_bar_1m`` — policy checks (reset, HMM gate)
+    * (optional) ``on_trade_tick`` / ``on_bar_1m`` — policy checks (reset,
+      regime gate)
     """
 
     name: str = "grid-base"
@@ -93,6 +102,12 @@ class GridBase(ContinuousStrategyBase):
         self.step: float = float(p["step"])
         self.geometric: bool = bool(p.get("geometric", False))
         self.stop_loss_pct: float = float(p.get("stop_loss_pct", 0.15))
+        # Spot-valid default: only BUYs below center at start; SELLs are
+        # emitted by ``on_fill`` when their paired BUY fills.
+        self.buy_only: bool = bool(p.get("buy_only", True))
+        # Offset from the filled BUY level at which to post the paired
+        # SELL. 1 → post SELL at level +1 (center + 1 step). 2 → +2 step.
+        self.pair_sell_offset_levels: int = int(p.get("pair_sell_offset_levels", 1))
         self.ttl_s: float | None = p.get("order_ttl_s")
         self.state = GridState()
 
@@ -104,13 +119,20 @@ class GridBase(ContinuousStrategyBase):
         center = self._initial_center(spot_px=spot_px)
         self.state.center_price = center
         self.state.initial_center = center
-        return self._place_grid_actions(center=center, ts=ts)
+        return self._place_grid_actions(
+            center=center,
+            ts=ts,
+            sides=("BUY",) if self.buy_only else ("BUY", "SELL"),
+        )
 
     def on_trade_tick(self, *, px: float, ts: float) -> list[Action]:
         if self.state.stopped_out:
             return []
-        # Absolute stop-loss floor from initial_center (see plan).
-        lower_stop = self.state.initial_center * (1 - self.stop_loss_pct)
+        # Stop-loss anchored to the *current* centre_price so DGT-style
+        # resets move the floor with the grid. Prevents the 3.8a bug where
+        # SL remained anchored to initial_center while grid reset
+        # repeatedly lower — immediate SL trigger post-reset.
+        lower_stop = self.state.center_price * (1 - self.stop_loss_pct)
         if px <= lower_stop:
             self.state.stopped_out = True
             return [CancelAll(reason=f"stop_loss_{self.stop_loss_pct:.3f}")]
@@ -120,14 +142,52 @@ class GridBase(ContinuousStrategyBase):
         return []
 
     def on_fill(self, fill: LimitFill) -> list[Action]:
-        # Initial placement already holds both sides of every level; a
-        # fill simply consumes one leg. Round-trip PnL is computed at
-        # report time by pairing BUY / SELL fills (FIFO) — no mid-cycle
-        # replenishment, which would collide with still-open opposite
-        # orders and would produce ``duplicate_coid`` warnings for no
-        # economic reason.
-        self.state.last_fill_by_level[self._fill_level_idx(fill)] = fill.side
-        return []
+        level = self._fill_level_idx(fill)
+        self.state.last_fill_by_level[level] = fill.side
+        if not self.buy_only or fill.side != "BUY" or level >= 0:
+            # Symmetric mode: initial placement held both legs, no action.
+            # Sell fill in buy-only mode: round-trip complete, done.
+            if fill.side == "SELL":
+                self.state.open_sells_by_level.discard(level)
+            return []
+
+        # BUY fill in buy-only mode → post paired SELL at mirrored level.
+        target_idx = abs(level) + (self.pair_sell_offset_levels - 1)
+        if target_idx in self.state.open_sells_by_level:
+            # Already have a SELL open at this target (prior round-trip).
+            return []
+        price = self._level_price(
+            center=self.state.center_price,
+            idx=target_idx,
+            side="SELL",
+        )
+        if price is None:
+            return []
+        coid = deterministic_coid(
+            strategy_id=self.strategy_id,
+            instrument_id=self.instrument_id,
+            reset_gen=self.state.reset_gen,
+            level_idx=target_idx,
+            side="SELL",
+            center_price=self.state.center_price,
+        )
+        order = LimitOrder(
+            coid=coid,
+            strategy_id=self.strategy_id,
+            instrument_id=self.instrument_id,
+            side="SELL",
+            price=price,
+            qty=self.qty_per_level,
+            ts_placed=fill.ts,
+            ttl_s=self.ttl_s,
+            metadata={
+                "level_idx": target_idx,
+                "reset_gen": self.state.reset_gen,
+                "paired_with": fill.coid,
+            },
+        )
+        self.state.open_sells_by_level.add(target_idx)
+        return [Place(order=order)]
 
     # ------------------------------------------------------------------
     # Helpers for subclasses / tests
@@ -146,24 +206,49 @@ class GridBase(ContinuousStrategyBase):
             geometric=self.geometric,
         )
 
+    def _level_price(self, *, center: float, idx: int, side: str) -> float | None:
+        """Return the price at level ``idx`` (positive = above, negative = below)
+        using the strategy's current step / geometry. ``None`` if the computed
+        price would be non-positive or beyond the configured band."""
+        if idx == 0:
+            return None
+        k = abs(idx)
+        if idx > 0 and k > self.n_above:
+            return None
+        if idx < 0 and k > self.n_below:
+            return None
+        if not self.geometric:
+            price = center + idx * self.step if idx > 0 else center + idx * self.step
+        else:
+            factor = (1 + self.step) ** k if idx > 0 else (1 - self.step) ** k
+            price = center * factor
+        return price if price > 0 else None
+
     def _place_grid_actions(
         self,
         *,
         center: float,
         ts: float,
         reset_gen: int | None = None,
+        sides: tuple[str, ...] = ("BUY", "SELL"),
     ) -> list[Action]:
-        """Build a Place action per grid level.
+        """Build a Place action per grid level, filtered by ``sides``.
 
         ``reset_gen`` defaults to the strategy's current generation. DGT-style
         subclasses that emit ``Reset`` + ``Place`` in the same batch must pass
         the *post-reset* generation explicitly, because the driver bumps
         ``self.state.reset_gen`` only after processing the Reset action — the
         Place actions would otherwise embed stale coids.
+
+        ``sides`` restricts which legs get placed. Default is both legs
+        (legacy / symmetric mode); ``buy_only=True`` flows call with
+        ``sides=("BUY",)``.
         """
         gen = self.state.reset_gen if reset_gen is None else reset_gen
         actions: list[Action] = []
         for lvl in self._grid_levels(center):
+            if lvl.side not in sides:
+                continue
             coid = deterministic_coid(
                 strategy_id=self.strategy_id,
                 instrument_id=self.instrument_id,
@@ -190,7 +275,7 @@ class GridBase(ContinuousStrategyBase):
         # Level idx is encoded in metadata when placed, but fills don't
         # carry metadata — infer from price proximity to the grid.
         for lvl in self._grid_levels(self.state.center_price):
-            if abs(lvl.price - fill.price) < 1e-8 and lvl.side == fill.side:
+            if abs(lvl.price - fill.price) < 1e-6 and lvl.side == fill.side:
                 return lvl.idx
         return 0
 
@@ -200,6 +285,8 @@ class GridBase(ContinuousStrategyBase):
         self.state.reset_gen += 1
         self.state.center_price = new_center
         self.state.realized_pnl = realized_pnl
+        # New generation starts with no paired SELLs open.
+        self.state.open_sells_by_level.clear()
 
     # Convenience for tests + dashboards.
     @property

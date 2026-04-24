@@ -42,7 +42,9 @@ def test_dgt_upper_breach_emits_reset_then_grid() -> None:
     assert actions[0].new_center == 1301.0
     assert "upper" in actions[0].reason
     places = [a for a in actions if isinstance(a, Place)]
-    assert len(places) == 6
+    # 3.8a.1 default buy_only=True: rebuild places only 3 BUYs
+    assert len(places) == 3
+    assert {p.order.side for p in places} == {"BUY"}
 
 
 def test_dgt_lower_breach_emits_reset_with_lower_reason() -> None:
@@ -73,13 +75,14 @@ async def test_dgt_driver_end_to_end_reset_and_place() -> None:
     book = LimitBookSim(persist=False)
     drv = ContinuousDriver(strategy=s, book=book)
     await drv.start(spot_px=1000.0, ts=1.0)
-    assert len(book) == 6 and s.state.reset_gen == 0
+    # 3.8a.1 default buy_only=True → 3 BUYs at start.
+    assert len(book) == 3 and s.state.reset_gen == 0
     # Breach upper.
     await drv.on_tick(px=1301.0, ts=2.0)
     assert s.state.reset_gen == 1
     assert s.state.center_price == 1301.0
-    # Old grid cancelled, new grid placed (6 levels around 1301).
-    assert len(book) == 6
+    # Old grid cancelled, new 3-BUY grid placed around 1301.
+    assert len(book) == 3
     assert drv.stats.resets == 1
 
 

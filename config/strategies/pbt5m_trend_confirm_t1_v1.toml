@@ -9,8 +9,9 @@ name = "trend_confirm_t1_v1"
 description = "T-180s entry; sign(delta_bps) × 6-filter AFML stack × Chainlink protection × MC vote."
 
 [params]
-# Timing — T-2min (180s) window, ±30s tolerance to not miss horizon.
-entry_horizon_s = 180
+# Timing — latest entry T-2min (180s). Window widened earlier to allow
+# entries from T-3min down to T-2min (±30s around T-2:30min).
+entry_horizon_s = 150
 horizon_tolerance_s = 30.0
 
 # Direction threshold

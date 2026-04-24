@@ -66,19 +66,25 @@ def test_compute_levels_skips_negative_buy_prices() -> None:
     assert [lvl.price for lvl in buys] == [5.0]
 
 
-def test_static_v1_on_start_places_full_grid() -> None:
+def test_static_v1_on_start_buy_only_default() -> None:
+    """3.8a.1: default buy_only=True places only BUYs at start; SELLs are
+    emitted by on_fill (paired-mirror)."""
     strat = GridStaticV1(_cfg())
     actions = strat.on_start(spot_px=75000.0, ts=1.0)
     placed = [a for a in actions if isinstance(a, Place)]
-    assert len(placed) == 6  # 3 below + 3 above
-    # All orders carry the same reset_gen=0 and are grouped by side.
-    sides = {a.order.side for a in placed}
-    assert sides == {"BUY", "SELL"}
-    # Prices distributed around 75000 with $100 step.
-    buy_prices = sorted(a.order.price for a in placed if a.order.side == "BUY")
-    sell_prices = sorted(a.order.price for a in placed if a.order.side == "SELL")
+    assert len(placed) == 3  # 3 BUYs below, no SELLs at start
+    assert {a.order.side for a in placed} == {"BUY"}
+    buy_prices = sorted(a.order.price for a in placed)
     assert buy_prices == [74700.0, 74800.0, 74900.0]
-    assert sell_prices == [75100.0, 75200.0, 75300.0]
+
+
+def test_static_v1_on_start_symmetric_when_buy_only_false() -> None:
+    """Legacy symmetric mode remains available via buy_only=False."""
+    strat = GridStaticV1(_cfg(buy_only=False))
+    actions = strat.on_start(spot_px=75000.0, ts=1.0)
+    placed = [a for a in actions if isinstance(a, Place)]
+    assert len(placed) == 6  # 3 BUYs + 3 SELLs
+    assert {a.order.side for a in placed} == {"BUY", "SELL"}
 
 
 def test_static_v1_deterministic_coids() -> None:
@@ -105,11 +111,44 @@ def test_static_v1_stop_loss_cancels_all() -> None:
     assert strat.on_trade_tick(px=840.0, ts=4.0) == []
 
 
-def test_static_v1_on_fill_is_bookkeeping_only() -> None:
-    """Initial placement already holds both legs at every level; a fill
-    simply consumes one side and does not emit new actions (placing the
-    opposite would duplicate-coid-collide with the still-open level)."""
+def test_static_v1_buy_fill_posts_paired_sell() -> None:
+    """3.8a.1 buy_only flow: BUY fill at level -1 triggers a paired
+    SELL at level +1 at the mirrored price."""
     strat = GridStaticV1(_cfg())
+    strat.on_start(spot_px=1000.0, ts=1.0)
+    fill = LimitFill(
+        coid="buy-fill-coid",
+        strategy_id=strat.strategy_id,
+        instrument_id=strat.instrument_id,
+        side="BUY",
+        price=900.0,  # level -1 when center=1000, step=100
+        qty=0.01,
+        ts=2.0,
+        fee=0.0,
+    )
+    actions = strat.on_fill(fill)
+    assert len(actions) == 1 and isinstance(actions[0], Place)
+    order = actions[0].order
+    assert order.side == "SELL"
+    assert order.price == 1100.0  # center + 1 * step
+    # Second fill at same level should NOT double-post (open_sells_by_level).
+    fill2 = LimitFill(
+        coid="buy-fill2-coid",
+        strategy_id=strat.strategy_id,
+        instrument_id=strat.instrument_id,
+        side="BUY",
+        price=900.0,
+        qty=0.01,
+        ts=3.0,
+        fee=0.0,
+    )
+    assert strat.on_fill(fill2) == []
+
+
+def test_static_v1_symmetric_fill_is_bookkeeping_only() -> None:
+    """Symmetric mode (buy_only=False): fill consumes one leg and the
+    opposite leg is already in the book from on_start — no new actions."""
+    strat = GridStaticV1(_cfg(buy_only=False))
     strat.on_start(spot_px=1000.0, ts=1.0)
     fill = LimitFill(
         coid="doesnt-matter",
@@ -125,24 +164,28 @@ def test_static_v1_on_fill_is_bookkeeping_only() -> None:
     assert strat.state.last_fill_by_level[-1] == "BUY"
 
 
-async def test_driver_start_applies_initial_actions() -> None:
+async def test_driver_start_applies_initial_actions_buy_only() -> None:
     strat = GridStaticV1(_cfg())
     book = LimitBookSim(persist=False)
     driver = ContinuousDriver(strategy=strat, book=book)
     await driver.start(spot_px=1000.0, ts=1.0)
-    assert len(book) == 6
-    assert driver.stats.placed == 6
+    assert len(book) == 3
+    assert driver.stats.placed == 3
 
 
-async def test_driver_fill_reduces_book_by_one() -> None:
+async def test_driver_buy_fill_posts_paired_sell_end_to_end() -> None:
     strat = GridStaticV1(_cfg())
     book = LimitBookSim(persist=False)
     driver = ContinuousDriver(strategy=strat, book=book)
     await driver.start(spot_px=1000.0, ts=1.0)
-    # Price dips to the first BUY level (900). One BUY fills; no replenishment.
+    # Book: 3 BUYs at 900, 800, 700. Tick to 900 → one BUY fills,
+    # paired SELL at 1100 is placed.
     await driver.on_tick(px=900.0, ts=2.0)
     assert driver.stats.fills == 1
-    assert len(book) == 5
+    # 2 remaining BUYs + 1 new SELL = 3.
+    assert len(book) == 3
+    sides = {o.side for o in book.snapshot()}
+    assert sides == {"BUY", "SELL"}
 
 
 async def test_driver_applies_cancel_action() -> None:
@@ -150,10 +193,10 @@ async def test_driver_applies_cancel_action() -> None:
     book = LimitBookSim(persist=False)
     driver = ContinuousDriver(strategy=strat, book=book)
     await driver.start(spot_px=1000.0, ts=1.0)
-    # Build a Cancel action for an existing coid.
+    # Book has 3 BUYs from buy_only start. Cancel one.
     any_coid = next(iter(book.snapshot())).coid
     await driver._apply([Cancel(coid=any_coid, reason="test")], ts=2.0)
-    assert len(book) == 5
+    assert len(book) == 2
     assert driver.stats.cancelled == 1
 
 

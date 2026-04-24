@@ -14,8 +14,10 @@ n_above = 15
 qty_per_level = 0.02
 stop_loss_pct = 0.15
 atr_period = 14
-atr_multiplier = 0.5
-recompute_delta_pct = 0.20
+atr_multiplier = 2.0
+recompute_delta_pct = 0.40
+atr_bar_window_s = 900.0
+rebuild_cooldown_s = 3600.0
 
 [paper]
 capital_usd = 1000.0

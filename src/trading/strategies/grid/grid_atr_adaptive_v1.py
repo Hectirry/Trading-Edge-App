@@ -1,14 +1,23 @@
-"""grid_atr_adaptive_v1 — ATR-sized grid step (Phase 3.8a).
+"""grid_atr_adaptive_v1 — ATR-sized grid step (Phase 3.8a / 3.8a.1).
 
-Step size tracks realized range instead of a fixed fraction: ``step =
-ATR(period) * multiplier``. ATR updates on each 1m bar; the grid is
-rebuilt when the new step deviates from the last applied step by more
-than ``recompute_delta_pct`` (default 20%), avoiding order-churn from
-tiny ATR wobble.
+Step size tracks realised range instead of a fixed fraction: ``step =
+ATR(period) * multiplier``.
 
-Rebuild is a reset around the *current* center (not spot). Breach-based
-reset (DGT) is intentionally left to ``grid_dgt_v1`` — combining both
-policies is 3.8b territory.
+Sprint 3.8a.1 adjustments (learning from the catastrophic 1m-bar
+churn seen in the initial backtest):
+
+* ``atr_bar_window_s`` aggregates 1m inputs into synthetic bars of
+  the given window (default 900 = 15 m). This avoids the 17-second
+  rebuild cadence produced by raw 1m ATR.
+* ``atr_multiplier`` default raised 0.5 → 2.0 so the step is wider
+  than a typical single-bar range (the grid absorbs noise, captures
+  expansion).
+* ``recompute_delta_pct`` default raised 0.20 → 0.40 — require 40%
+  deviation from the last-applied step before rebuilding.
+* ``rebuild_cooldown_s`` (default 3600) enforces at least 1 hour
+  between rebuilds.
+* ``buy_only`` default True (inherited) → rebuild places BUY-only;
+  SELLs paired on fill.
 """
 
 from __future__ import annotations
@@ -25,29 +34,84 @@ class GridAtrAdaptiveV1(GridBase):
         super().__init__(config)
         p = self.params
         self.atr_period: int = int(p.get("atr_period", 14))
-        self.atr_multiplier: float = float(p.get("atr_multiplier", 0.5))
-        self.recompute_delta_pct: float = float(p.get("recompute_delta_pct", 0.20))
+        self.atr_multiplier: float = float(p.get("atr_multiplier", 2.0))
+        self.recompute_delta_pct: float = float(p.get("recompute_delta_pct", 0.40))
+        self.atr_bar_window_s: float = float(p.get("atr_bar_window_s", 900.0))
+        self.rebuild_cooldown_s: float = float(p.get("rebuild_cooldown_s", 3600.0))
         self._atr = ATR(period=self.atr_period)
-        # Seeded from config; first ATR-driven resize replaces it.
         self._last_step: float = float(self.step)
+        self._last_rebuild_ts: float = 0.0
+        # Synthetic bar aggregation state.
+        self._agg_open_ts: float | None = None
+        self._agg_open: float = 0.0
+        self._agg_high: float = 0.0
+        self._agg_low: float = 0.0
+        self._agg_close: float = 0.0
+
+    def _maybe_emit_aggregate(self, bar: Bar) -> Bar | None:
+        """Aggregate incoming 1m bars into a bar of length
+        ``atr_bar_window_s``. Return the completed aggregate bar when the
+        window closes, otherwise None.
+
+        Pass-through when ``atr_bar_window_s <= 60`` (no aggregation, one
+        output per 1m input) — used by tests that drive tight sequences.
+        """
+        if self.atr_bar_window_s <= 60.0:
+            return bar
+        if self._agg_open_ts is None:
+            self._agg_open_ts = bar.ts_open
+            self._agg_open = bar.open
+            self._agg_high = bar.high
+            self._agg_low = bar.low
+            self._agg_close = bar.close
+            return None
+        self._agg_high = max(self._agg_high, bar.high)
+        self._agg_low = min(self._agg_low, bar.low)
+        self._agg_close = bar.close
+        if bar.ts_close - self._agg_open_ts >= self.atr_bar_window_s:
+            agg = Bar(
+                ts_open=self._agg_open_ts,
+                ts_close=bar.ts_close,
+                open=self._agg_open,
+                high=self._agg_high,
+                low=self._agg_low,
+                close=self._agg_close,
+                volume=0.0,
+            )
+            self._agg_open_ts = None
+            return agg
+        return None
 
     def on_bar_1m(self, bar: Bar) -> list[Action]:
-        atr_now = self._atr.update(bar.high, bar.low, bar.close)
+        agg = self._maybe_emit_aggregate(bar)
+        if agg is None:
+            return []
+        atr_now = self._atr.update(agg.high, agg.low, agg.close)
         if not self._atr.ready or atr_now <= 0:
             return []
-
         new_step = atr_now * self.atr_multiplier
         if new_step <= 0:
             return []
-
         delta = abs(new_step - self._last_step) / max(self._last_step, 1e-9)
         if delta < self.recompute_delta_pct:
             return []
-
+        if (
+            self.rebuild_cooldown_s > 0
+            and (agg.ts_close - self._last_rebuild_ts) < self.rebuild_cooldown_s
+        ):
+            return []
         self.step = new_step
         self._last_step = new_step
+        self._last_rebuild_ts = agg.ts_close
         next_gen = self.state.reset_gen + 1
         center = self.state.center_price
         actions: list[Action] = [Reset(new_center=center, reason="atr_shift")]
-        actions.extend(self._place_grid_actions(center=center, ts=bar.ts_close, reset_gen=next_gen))
+        actions.extend(
+            self._place_grid_actions(
+                center=center,
+                ts=agg.ts_close,
+                reset_gen=next_gen,
+                sides=("BUY",) if self.buy_only else ("BUY", "SELL"),
+            )
+        )
         return actions

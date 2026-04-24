@@ -21,6 +21,10 @@ def _cfg(**overrides) -> dict:
             "atr_period": 3,
             "atr_multiplier": 1.0,
             "recompute_delta_pct": 0.20,
+            # Tests feed 1m bars directly — bypass 15m aggregation.
+            "atr_bar_window_s": 60.0,
+            # Disable cooldown to let tests drive tight sequences.
+            "rebuild_cooldown_s": 0.0,
         },
     }
     base["params"].update(overrides)
@@ -61,9 +65,11 @@ def test_atr_rebuild_emits_reset_and_full_grid() -> None:
     rebuild = next(a for a in actions_seq if a)
     assert isinstance(rebuild[0], Reset)
     assert rebuild[0].reason == "atr_shift"
-    assert rebuild[0].new_center == 1000.0  # center unchanged, only step
+    assert rebuild[0].new_center == 1000.0
     places = [a for a in rebuild if isinstance(a, Place)]
-    assert len(places) == 6
+    # 3.8a.1 default buy_only=True → only 3 BUYs (not 6).
+    assert len(places) == 3
+    assert {p.order.side for p in places} == {"BUY"}
 
 
 def test_atr_expansion_rebuilds_again() -> None:
@@ -83,13 +89,13 @@ async def test_atr_driver_rebuild_cancels_old_grid() -> None:
     book = LimitBookSim(persist=False)
     drv = ContinuousDriver(strategy=s, book=book)
     await drv.start(spot_px=1000.0, ts=1.0)
-    assert len(book) == 6
+    # 3.8a.1 buy_only default → 3 BUYs at start.
+    assert len(book) == 3
     for i in range(5):
         await drv.on_bar_1m(_bar(60 * (i + 1), (1010.0, 990.0, 1000.0)))
-    # Exactly one grid present after rebuild (6 new levels, old ones cancelled).
-    assert len(book) == 6
+    # After rebuild: 3 new BUYs, old ones cancelled.
+    assert len(book) == 3
     assert drv.stats.resets >= 1
-    # Step now reflects ATR * multiplier (≈ 20), not config 100.
     assert 0 < s.step < 100.0
 
 

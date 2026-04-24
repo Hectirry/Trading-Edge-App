@@ -12,6 +12,8 @@ geometric = true
 n_below = 15
 n_above = 15
 qty_per_level = 0.02
+reset_cooldown_s = 3600
+trend_gate_1h_pct = 0.03
 stop_loss_pct = 0.15
 
 [paper]
