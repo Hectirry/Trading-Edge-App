@@ -55,6 +55,17 @@ else
   log "WARN: $SECRETS not found — DATABASE_URL likely missing"
 fi
 
+# vps_daily runs on the host, not inside the tea-engine container.
+# The secrets file targets the docker network (tea-postgres:5432), but from
+# the host we must use the mapped port on 127.0.0.1. Override here so the
+# backtest CLI (which reads TEA_PG_*) and our exporter (DATABASE_URL) both
+# hit the right endpoint.
+export TEA_PG_HOST="${TEA_VPS_PG_HOST:-127.0.0.1}"
+export TEA_PG_PORT="${TEA_VPS_PG_PORT:-5434}"
+if [ -z "${DATABASE_URL:-}" ]; then
+  export DATABASE_URL="postgresql://${TEA_PG_USER:-tea}:${TEA_PG_PASSWORD:-}@${TEA_PG_HOST}:${TEA_PG_PORT}/${TEA_PG_DB:-trading_edge}"
+fi
+
 # Activate venv.
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"

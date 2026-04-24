@@ -2,6 +2,7 @@
 # Format (pipe-separated, one per line):
 #   <family/strategy>|<params_toml_path>|<from_iso>|<to_iso>|<data_source>
 #
-# Example (uncomment to enable — adjust dates to your data window):
-#
-# polymarket_btc5m/trend_confirm_t1_v1|config/strategies/pbt5m_trend_confirm_t1_v1.toml|2026-04-17T00:00:00Z|2026-04-23T23:59:59Z|polybot_sqlite
+# First real entry: trend_confirm_t1_v1 on the last full UTC day of paper_ticks.
+# Update the date window as paper_ticks grows (eventually move to a rolling
+# window computed in the script itself).
+polymarket_btc5m/trend_confirm_t1_v1|config/strategies/pbt5m_trend_confirm_t1_v1.toml|2026-04-23T00:00:00Z|2026-04-23T23:59:59Z|paper_ticks

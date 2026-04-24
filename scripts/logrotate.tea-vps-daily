@@ -1,4 +1,5 @@
 /var/log/tea-vps-daily.log {
+    su coder coder
     weekly
     rotate 8
     compress
