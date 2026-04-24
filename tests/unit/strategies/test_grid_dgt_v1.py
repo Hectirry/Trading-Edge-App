@@ -70,6 +70,41 @@ def test_dgt_reset_place_uses_next_gen_coids() -> None:
     assert coids_new.isdisjoint(coids_if_stale)
 
 
+async def test_dgt_driver_reset_cancels_only_buys_in_buy_only_mode() -> None:
+    """3.8a.2 regression: Reset action triggered via strategy cancels only
+    BUYs in buy_only mode; any resting SELL survives. Uses an artificially
+    placed SELL outside the tick-fill path so we isolate the cancel-all
+    filtering behaviour."""
+    from trading.engine.continuous_strategy_base import Reset
+    from trading.paper.limit_book_sim import LimitOrder
+
+    s = GridDgtV1(_cfg())
+    book = LimitBookSim(persist=False)
+    drv = ContinuousDriver(strategy=s, book=book)
+    await drv.start(spot_px=1000.0, ts=1.0)
+    assert len(book) == 3  # 3 BUYs
+
+    # Inject a SELL far above the grid — won't fill at the Reset tick.
+    await book.place(
+        LimitOrder(
+            coid="paired-sell-surv",
+            strategy_id=s.strategy_id,
+            instrument_id=s.instrument_id,
+            side="SELL",
+            price=9999.0,
+            qty=0.01,
+            ts_placed=1.5,
+        )
+    )
+    assert len(book) == 4
+
+    # Apply Reset action directly (bypass on_trade_tick → no book.on_tick fills).
+    await drv._apply([Reset(new_center=1200.0, reason="test")], ts=2.0)
+    sides = [o.side for o in book.snapshot()]
+    assert sides.count("SELL") == 1  # preserved
+    assert sides.count("BUY") == 0  # all cancelled (new BUYs will come from next tick)
+
+
 async def test_dgt_driver_end_to_end_reset_and_place() -> None:
     s = GridDgtV1(_cfg())
     book = LimitBookSim(persist=False)

@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from trading.common.config import get_settings
+from trading.common.db import acquire
 from trading.common.logging import configure_logging, get_logger
 from trading.engine.backtest_driver import EntryWindowConfig, FillConfig, run_backtest
 from trading.engine.data_loader import PolybotSQLiteLoader
@@ -25,6 +26,7 @@ from trading.engine.node import create_trading_node
 from trading.engine.risk import RiskManager
 from trading.paper.backtest_loader import PaperTicksLoader
 from trading.research.report import persist_and_render
+from trading.strategies.polymarket_btc5m._macro_provider import Candle, FixedMacroProvider
 
 log = get_logger("cli.backtest")
 
@@ -38,7 +40,36 @@ def _parse_ts(s: str) -> datetime:
     return ts
 
 
-def _load_strategy(name: str, config: dict):
+async def _load_macro_provider(*, from_ts: datetime, to_ts: datetime) -> FixedMacroProvider:
+    """Pull 5m BTCUSDT candles from market_data.crypto_ohlcv + 34 bars
+    of pre-window history so the first queryable minute has a full
+    lookback window. Builds a ``FixedMacroProvider`` keyed by bar
+    close_ts so strategies can consume it without a DB connection.
+    """
+    # Pull an extra 34 candles (34 × 5 min = 170 min ≈ 3 h) of lead-in
+    # so snapshot_at has a full window at the earliest requested ts.
+    lead_in = from_ts.timestamp() - 34 * 300
+    async with acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT ts, high, low, close FROM market_data.crypto_ohlcv "
+            "WHERE exchange='binance' AND symbol='BTCUSDT' AND interval='5m' "
+            "AND ts >= to_timestamp($1) AND ts <= $2 ORDER BY ts",
+            lead_in,
+            to_ts,
+        )
+    candles = [
+        Candle(
+            ts=r["ts"].timestamp(),
+            high=float(r["high"]),
+            low=float(r["low"]),
+            close=float(r["close"]),
+        )
+        for r in rows
+    ]
+    return FixedMacroProvider(candles=candles)
+
+
+async def _load_strategy(name: str, config: dict, macro_provider):
     if name == "polymarket_btc5m/trend_confirm_t1_v1":
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import (
             TrendConfirmT1V1,
@@ -50,31 +81,36 @@ def _load_strategy(name: str, config: dict):
             Last90sForecasterV1,
         )
 
-        return Last90sForecasterV1(config=config)
+        return Last90sForecasterV1(config, macro_provider=macro_provider)
     if name == "polymarket_btc5m/last_90s_forecaster_v2":
         from trading.strategies.polymarket_btc5m.last_90s_forecaster_v2 import (
             Last90sForecasterV2,
+            load_runner_async,
         )
 
-        return Last90sForecasterV2(config=config)
+        runner = await load_runner_async()
+        return Last90sForecasterV2(config, macro_provider=macro_provider, model=runner)
     if name == "polymarket_btc5m/contest_ensemble_v1":
         from trading.strategies.polymarket_btc5m.contest_ensemble_v1 import (
             ContestEnsembleV1,
+            load_meta_model_async_factory,
         )
 
-        return ContestEnsembleV1(config=config)
+        meta_model = await load_meta_model_async_factory()()
+        return ContestEnsembleV1(config, macro_provider=macro_provider, meta_model=meta_model)
     if name == "polymarket_btc5m/contest_avengers_v1":
         from trading.strategies.polymarket_btc5m.contest_avengers_v1 import (
             ContestAvengersV1,
         )
 
-        return ContestAvengersV1(config=config)
+        return ContestAvengersV1(config, macro_provider=macro_provider)
     raise SystemExit(f"unknown strategy: {name}")
 
 
 async def _run(args: argparse.Namespace) -> None:
     cfg = tomli.loads(Path(args.params).read_text())
-    strategy = _load_strategy(args.strategy, cfg)
+    macro_provider = await _load_macro_provider(from_ts=args.from_ts, to_ts=args.to_ts)
+    strategy = await _load_strategy(args.strategy, cfg, macro_provider)
     # Node is a contract handle; backtest mode is the only one wired (ADR 0006).
     create_trading_node(mode="backtest", strategy_name=args.strategy)
 

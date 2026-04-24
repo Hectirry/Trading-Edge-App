@@ -59,6 +59,19 @@ async def test_cancel_removes_order() -> None:
     assert await b.cancel("c1") is False
 
 
+async def test_cancel_all_side_filter_buy_only() -> None:
+    """3.8a.2: side filter lets the continuous driver cancel only BUYs
+    on Reset so paired SELLs survive across grid generations."""
+    b = _book()
+    await b.place(_order(coid="b1", side="BUY", price=100.0))
+    await b.place(_order(coid="b2", side="BUY", price=99.0))
+    await b.place(_order(coid="s1", side="SELL", price=110.0))
+    n = await b.cancel_all(strategy_id="grid_test", side="BUY", reason="reset")
+    assert n == 2
+    assert b.get("b1") is None and b.get("b2") is None
+    assert b.get("s1") is not None  # SELL preserved
+
+
 async def test_cancel_all_by_strategy() -> None:
     b = _book()
     await b.place(_order(coid="a1", strategy_id="s1"))

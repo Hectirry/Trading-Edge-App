@@ -166,14 +166,23 @@ class LimitBookSim:
         *,
         strategy_id: str | None = None,
         instrument_id: str | None = None,
+        side: str | None = None,
         reason: str = "reset",
     ) -> int:
+        """Cancel every resting order matching the given filters.
+
+        ``side`` (new 3.8a.2): when set to "BUY" or "SELL", only cancels
+        orders on that side. Used by the continuous driver on Reset to
+        preserve paired SELLs across grid resets — they are the closing
+        orders for accumulated long inventory and must not be discarded.
+        """
         async with self._lock:
             victims = [
                 o
                 for o in self._orders.values()
                 if (strategy_id is None or o.strategy_id == strategy_id)
                 and (instrument_id is None or o.instrument_id == instrument_id)
+                and (side is None or o.side == side)
             ]
             for o in victims:
                 self._orders.pop(o.coid, None)
@@ -184,6 +193,7 @@ class LimitBookSim:
             "limit_book.cancel_all",
             strategy_id=strategy_id,
             instrument_id=instrument_id,
+            side=side,
             n=len(victims),
             reason=reason,
         )

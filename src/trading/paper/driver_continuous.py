@@ -168,11 +168,17 @@ class ContinuousDriver:
             )
             self.stats.cancelled += n
         elif isinstance(action, Reset):
-            # Atomic: snapshot realized pnl in strategy *before* cancelling,
-            # then cancel all, then strategy rebuilds on next on_trade_tick
-            # (or driver can prompt via the metadata).
+            # Atomic: snapshot realised pnl in strategy *before* cancelling,
+            # then cancel only BUYs when the strategy runs buy-only mode
+            # (3.8a.2 fix). Paired SELLs opened by prior-generation BUY
+            # fills are the closing orders for already-accumulated long
+            # inventory; discarding them would strand the inventory.
+            # In symmetric mode the whole grid is cancelled as before.
+            buy_only = bool(getattr(self.strategy, "buy_only", False))
+            side_to_cancel = "BUY" if buy_only else None
             n_cancel = await self.book.cancel_all(
                 strategy_id=self.strategy.strategy_id,
+                side=side_to_cancel,
                 reason=f"reset:{action.reason}",
             )
             self.stats.cancelled += n_cancel
