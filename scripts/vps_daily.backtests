@@ -2,7 +2,8 @@
 # Format (pipe-separated, one per line):
 #   <family/strategy>|<params_toml_path>|<from_iso>|<to_iso>|<data_source>
 #
-# First real entry: trend_confirm_t1_v1 on the last full UTC day of paper_ticks.
-# Update the date window as paper_ticks grows (eventually move to a rolling
-# window computed in the script itself).
-polymarket_btc5m/trend_confirm_t1_v1|config/strategies/pbt5m_trend_confirm_t1_v1.toml|2026-04-23T00:00:00Z|2026-04-23T23:59:59Z|paper_ticks
+# First real entry: trend_confirm_t1_v1 on 6h of paper_ticks.
+# NOTE: VPS has 7.8G RAM with all containers running; 24h window OOM'd on
+# 2026-04-24 (swap at 100%). Keeping a tight window until we either add a
+# chunked loader or run backtests inside tea-engine container.
+polymarket_btc5m/trend_confirm_t1_v1|config/strategies/pbt5m_trend_confirm_t1_v1.toml|2026-04-23T12:00:00Z|2026-04-23T18:00:00Z|paper_ticks

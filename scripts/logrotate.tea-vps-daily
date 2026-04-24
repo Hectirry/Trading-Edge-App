@@ -1,4 +1,4 @@
-/var/log/tea-vps-daily.log {
+/home/coder/Trading-Edge-App/logs/vps-daily.log {
     su coder coder
     weekly
     rotate 8
