@@ -64,6 +64,7 @@ def _bare_driver() -> PaperDriver:
     d._control_channel = "tea:control:test_strategy"
     d._indicators = {}
     d._recent_ticks = {}
+    d._last_tick_at = {}
     d._open_positions = {}
     d._trade_taken = set()
     d._today = ""

@@ -61,6 +61,7 @@ class PaperDriver:
         # Per-market state.
         self._indicators: dict[str, IndicatorStack] = {}
         self._recent_ticks: dict[str, list[TickContext]] = {}
+        self._last_tick_at: dict[str, float] = {}
         self._open_positions: dict[str, Position] = {}
         self._trade_taken: set[str] = set()  # slugs where we already fired ENTER
 
@@ -101,6 +102,7 @@ class PaperDriver:
         kill_switch_task = asyncio.create_task(self._kill_switch_loop())
         eval_summary_task = asyncio.create_task(self._eval_summary_loop())
         settle_watchdog_task = asyncio.create_task(self._settle_watchdog_loop())
+        orphan_cleanup_task = asyncio.create_task(self._orphan_cleanup_loop())
         # Wrap the pubsub listen in a retry loop so a Redis hiccup
         # doesn't silently kill the driver. Exponential backoff, capped
         # at 30 s. Exit only on task cancellation.
@@ -152,6 +154,7 @@ class PaperDriver:
             kill_switch_task.cancel()
             eval_summary_task.cancel()
             settle_watchdog_task.cancel()
+            orphan_cleanup_task.cancel()
             self.strategy.on_stop()
 
     async def _rehydrate_trade_taken(self) -> None:
@@ -277,6 +280,7 @@ class PaperDriver:
         buf.append(ctx)
         if len(buf) > 140:
             buf.pop(0)
+        self._last_tick_at[slug] = ctx.ts
         indicators.update(ctx)
 
         self._roll_day(ctx.ts)
@@ -624,6 +628,39 @@ class PaperDriver:
     def _cleanup_market(self, slug: str) -> None:
         self._indicators.pop(slug, None)
         self._recent_ticks.pop(slug, None)
+        self._last_tick_at.pop(slug, None)
+
+    async def _orphan_cleanup_loop(self) -> None:
+        """Reclaim per-market buffers for markets the driver saw once but
+        never drove to settlement. The CLOB feed stops publishing ticks
+        when a market flips closed=true on gamma, so many markets never
+        emit a tick with t_in_window > 300 and the inline cleanup at
+        _handle_tick never fires. Those buffers accumulate silently and
+        dominate tea-engine RSS growth. Sweep every 60 s, drop slugs
+        idle > 10 min that are not currently open positions (handled by
+        the settle watchdog)."""
+        import time as _time
+
+        while True:
+            try:
+                await asyncio.sleep(60)
+                now = _time.time()
+                stale = [
+                    slug
+                    for slug, last in list(self._last_tick_at.items())
+                    if now - last > 600 and slug not in self._open_positions
+                ]
+                for slug in stale:
+                    self._cleanup_market(slug)
+                if stale:
+                    log.info(
+                        "paper.driver.orphan_cleanup",
+                        strategy=self.strategy.name,
+                        dropped=len(stale),
+                        live_markets=len(self._recent_ticks),
+                    )
+            except Exception as e:
+                log.warning("paper.driver.orphan_cleanup.err", err=str(e))
 
     def _roll_day(self, ts: float) -> None:
         day = datetime.fromtimestamp(ts, tz=UTC).strftime("%Y-%m-%d")
