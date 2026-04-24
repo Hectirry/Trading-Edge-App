@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import tomllib as tomli
 from datetime import UTC, datetime
 from pathlib import Path
-
-import tomli
 
 from trading.common.config import get_settings
 from trading.common.logging import configure_logging, get_logger
@@ -44,6 +43,36 @@ def _load_strategy(name: str, config: dict):
         from trading.strategies.polymarket_btc5m.imbalance_v3 import ImbalanceV3
 
         return ImbalanceV3(config=config)
+    if name == "polymarket_btc5m/trend_confirm_t1_v1":
+        from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import (
+            TrendConfirmT1V1,
+        )
+
+        return TrendConfirmT1V1(config=config)
+    if name == "polymarket_btc5m/last_90s_forecaster_v1":
+        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v1 import (
+            Last90sForecasterV1,
+        )
+
+        return Last90sForecasterV1(config=config)
+    if name == "polymarket_btc5m/last_90s_forecaster_v2":
+        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v2 import (
+            Last90sForecasterV2,
+        )
+
+        return Last90sForecasterV2(config=config)
+    if name == "polymarket_btc5m/contest_ensemble_v1":
+        from trading.strategies.polymarket_btc5m.contest_ensemble_v1 import (
+            ContestEnsembleV1,
+        )
+
+        return ContestEnsembleV1(config=config)
+    if name == "polymarket_btc5m/contest_avengers_v1":
+        from trading.strategies.polymarket_btc5m.contest_avengers_v1 import (
+            ContestAvengersV1,
+        )
+
+        return ContestAvengersV1(config=config)
     raise SystemExit(f"unknown strategy: {name}")
 
 

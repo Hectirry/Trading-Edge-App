@@ -120,12 +120,14 @@ class GridBase(ContinuousStrategyBase):
         return []
 
     def on_fill(self, fill: LimitFill) -> list[Action]:
-        # Track realized PnL between paired fills (BUY fills → realized
-        # when matching SELL at higher price fills, and vice-versa). For
-        # the static-grid case we mark the fill and rely on round-trip
-        # pairing by level_idx on the opposite side.
+        # Initial placement already holds both sides of every level; a
+        # fill simply consumes one leg. Round-trip PnL is computed at
+        # report time by pairing BUY / SELL fills (FIFO) — no mid-cycle
+        # replenishment, which would collide with still-open opposite
+        # orders and would produce ``duplicate_coid`` warnings for no
+        # economic reason.
         self.state.last_fill_by_level[self._fill_level_idx(fill)] = fill.side
-        return self._replace_opposite(fill=fill)
+        return []
 
     # ------------------------------------------------------------------
     # Helpers for subclasses / tests
@@ -191,49 +193,6 @@ class GridBase(ContinuousStrategyBase):
             if abs(lvl.price - fill.price) < 1e-8 and lvl.side == fill.side:
                 return lvl.idx
         return 0
-
-    def _replace_opposite(self, *, fill: LimitFill) -> list[Action]:
-        """On BUY fill at level -k, place SELL at level +k (and vice-versa).
-
-        Round-trip capture: the matched pair (BUY -k, SELL +k) locks in
-        (price_sell - price_buy) * qty of realized spread on close.
-        """
-        filled_idx = self._fill_level_idx(fill)
-        if filled_idx == 0:
-            return []
-        target_idx = -filled_idx
-        target_side = "SELL" if fill.side == "BUY" else "BUY"
-        levels = self._grid_levels(self.state.center_price)
-        target = next(
-            (lvl for lvl in levels if lvl.idx == target_idx and lvl.side == target_side),
-            None,
-        )
-        if target is None:
-            return []
-        coid = deterministic_coid(
-            strategy_id=self.strategy_id,
-            instrument_id=self.instrument_id,
-            reset_gen=self.state.reset_gen,
-            level_idx=target.idx,
-            side=target.side,
-            center_price=self.state.center_price,
-        )
-        order = LimitOrder(
-            coid=coid,
-            strategy_id=self.strategy_id,
-            instrument_id=self.instrument_id,
-            side=target.side,
-            price=target.price,
-            qty=self.qty_per_level,
-            ts_placed=fill.ts,
-            ttl_s=self.ttl_s,
-            metadata={
-                "level_idx": target.idx,
-                "reset_gen": self.state.reset_gen,
-                "paired_with": fill.coid,
-            },
-        )
-        return [Place(order=order)]
 
     def on_reset_applied(
         self, *, old_center: float, new_center: float, realized_pnl: float, ts: float

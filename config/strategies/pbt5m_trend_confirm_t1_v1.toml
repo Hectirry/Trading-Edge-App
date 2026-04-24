@@ -1,31 +1,40 @@
-# trend_confirm_t1_v1 — ported from
+# trend_confirm_t1_v1 — ported 2026-04-24 from
 # /home/coder/BTC-Tendencia-5m/strategies/trend_confirm_t1_v1.yaml
-# (2026-04-22 tuning). Keep in sync when the source updates.
+# (source dated 2026-04-23 PM1). Incorporates the full live-bot
+# filter stack: min_fav_price, Chainlink concordance, prior_trend
+# (f7), two-tier min_confirmations, and Monte Carlo as active vote
+# (mc_shadow=false).
 
 name = "trend_confirm_t1_v1"
-description = "T-90s entry; sign(delta_bps) × AFML confirmation × Chainlink protection."
+description = "T-180s entry; sign(delta_bps) × 6-filter AFML stack × Chainlink protection × MC vote."
 
 [params]
-# Timing
-entry_horizon_s = 210
-horizon_tolerance_s = 10.0
+# Timing — T-2min (180s) window, ±30s tolerance to not miss horizon.
+entry_horizon_s = 180
+horizon_tolerance_s = 30.0
 
 # Direction threshold
 delta_bps_min = 1.0
 
-# Price cap on favored side
+# Favored-side price band
 max_price = 0.92
+min_fav_price = 0.40
 
-# AFML confirmation count (f1..f4 + soft candle f6; f5_mc is shadow)
-min_confirmations = 3
+# Confirmation thresholds
+min_confirmations = 5
+high_price_threshold = 0.55
+min_confirmations_high_price = 6
+
+# Filter tuning
 cusum_min_rate = 0.005
-
-# Candle filter window
 recent_window_s = 60
 doji_body_ratio_min = 0.3
+prior_trend_window_s = 600
+prior_trend_min_slope_bps = 5.0
 
-# Chainlink protection gate — DO NOT lower without explicit sign-off
+# Chainlink protection
 cl_adverse_max_bps = 15.0
+cl_concordance_min_ratio = 0.0
 
 # AFML feature tuning
 frac_d = 0.4
@@ -36,11 +45,11 @@ cusum_lookback = 120
 ar_lags = [1, 5, 15, 30]
 autocorr_lag = 30
 
-# Monte Carlo: shadow mode — logs mc_prob_up but doesn't count toward min_confirmations
+# Monte Carlo — active (non-shadow) as of 2026-04-23 PM1 in live
 mc_enabled = true
-mc_shadow = true
+mc_shadow = false
 mc_n_sims = 1000
-mc_threshold = 0.55
+mc_threshold = 0.58
 
 # Order routing
 order_type = "market"
@@ -48,12 +57,6 @@ limit_offset_bps = 50
 gtc_ttl_seconds = 30
 
 [sizing]
-# BTC-Tendencia-5m strategy YAML declares stake_usd=10 and
-# max_position_size_usd=10, but the top-level config.yaml sets
-# risk.max_position_size_usd=5.0 which caps the effective stake at $5.
-# Real live trades on 2026-04-22 use size_usd=5, so we mirror that cap
-# here in the [risk] section below (which takes precedence via
-# `min(stake_usd, risk.max_position_size_usd)`).
 stake_usd = 10.0
 kelly_fraction = 0.25
 max_position_size_usd = 10.0
@@ -66,35 +69,18 @@ decision_interval_s = 1
 
 [fill_model]
 slippage_bps = 10.0
-# polybot-agent's backtest ignores fill_probability — it always fills a
-# valid ENTER (simulate_fill in core/backtest_engine.py states this
-# explicitly). fill_probability=1.0 here matches for bit-exact parity.
-# Paper/live still run through their own probabilistic executor; this
-# value affects the backtest replay only.
 fill_probability = 1.0
-# polybot-agent's simulate_pnl subtracts the parabolic fee from gross pnl;
-# polybot-btc5m's backtest does NOT. Strategies declare the convention here
-# so the TEA driver matches each source exactly.
 apply_fee_in_backtest = true
 fee_k = 0.05
 
 [risk]
-# Strategy-specific risk gate. Alert/pause thresholds are applied in the
-# driver from capital_usd * alert_pct / pause_pct below.
-# max_position_size_usd set to 5.0 to mirror BTC-Tendencia-5m/config.yaml
-# top-level cap that actually applies in live (parity requirement).
-#
-# bypass_in_backtest=true — polybot-agent's backtest_engine skips its
-# RiskManager entirely (strategy → simulate_fill direct). Setting this
-# flag makes our Phase 2 backtest_driver match that behavior for
-# bit-exact parity. Live/paper modes still consult the manager.
 bypass_in_backtest = true
 cooldown_seconds = 30
 max_position_size_usd = 5.0
 daily_loss_limit_usd = 50.0
 daily_trade_limit = 999999
-min_edge_bps = 0          # strategy computes its own "edge" via AFML; no gate here
-min_z_score = 0.0         # disabled: not part of trend_confirm decision
+min_edge_bps = 0
+min_z_score = 0.0
 min_pm_depth_usd = 15.0
 skip_if_spread_bps = 500
 loss_pause_threshold_usd = 5.0
@@ -102,7 +88,6 @@ loss_pause_window_minutes = 30
 loss_pause_duration_minutes = 30
 
 [paper]
-# Per-strategy paper capital and thresholds (see ADR 0008).
 capital_usd = 1000.0
 daily_loss_alert_pct = 0.03
 daily_loss_pause_pct = 0.05

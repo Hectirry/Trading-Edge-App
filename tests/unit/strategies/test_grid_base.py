@@ -105,7 +105,10 @@ def test_static_v1_stop_loss_cancels_all() -> None:
     assert strat.on_trade_tick(px=840.0, ts=4.0) == []
 
 
-def test_static_v1_on_fill_places_opposite_pair() -> None:
+def test_static_v1_on_fill_is_bookkeeping_only() -> None:
+    """Initial placement already holds both legs at every level; a fill
+    simply consumes one side and does not emit new actions (placing the
+    opposite would duplicate-coid-collide with the still-open level)."""
     strat = GridStaticV1(_cfg())
     strat.on_start(spot_px=1000.0, ts=1.0)
     fill = LimitFill(
@@ -113,16 +116,13 @@ def test_static_v1_on_fill_places_opposite_pair() -> None:
         strategy_id=strat.strategy_id,
         instrument_id=strat.instrument_id,
         side="BUY",
-        price=900.0,  # level -1 when center=1000, step=100 (center-100=900)
+        price=900.0,
         qty=0.01,
         ts=2.0,
         fee=0.0,
     )
-    actions = strat.on_fill(fill)
-    assert len(actions) == 1 and isinstance(actions[0], Place)
-    o = actions[0].order
-    assert o.side == "SELL"
-    assert o.price == 1100.0  # level +1 (center+100)
+    assert strat.on_fill(fill) == []
+    assert strat.state.last_fill_by_level[-1] == "BUY"
 
 
 async def test_driver_start_applies_initial_actions() -> None:
@@ -134,17 +134,14 @@ async def test_driver_start_applies_initial_actions() -> None:
     assert driver.stats.placed == 6
 
 
-async def test_driver_fill_triggers_opposite_placement() -> None:
+async def test_driver_fill_reduces_book_by_one() -> None:
     strat = GridStaticV1(_cfg())
     book = LimitBookSim(persist=False)
     driver = ContinuousDriver(strategy=strat, book=book)
     await driver.start(spot_px=1000.0, ts=1.0)
-    # Price dips to the first BUY level (900). One BUY fills; strategy places matching SELL.
+    # Price dips to the first BUY level (900). One BUY fills; no replenishment.
     await driver.on_tick(px=900.0, ts=2.0)
     assert driver.stats.fills == 1
-    # Orig 6 + replacement SELL @ 1100 (already present, duplicate rejected).
-    # Duplicate coid rejection keeps net count at 5 (one BUY filled, no new unique SELL).
-    # Net effect: book has 5 orders.
     assert len(book) == 5
 
 

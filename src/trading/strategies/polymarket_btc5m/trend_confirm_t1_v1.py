@@ -2,22 +2,26 @@
 trend_confirm_t1_v1 — port from
 /home/coder/BTC-Tendencia-5m/strategies/trend_confirm_t1_v1.py.
 
-Literal behavioral port per the Phase 3.5 plan. Ordering of gates, default
-thresholds, breakdown keys, and feature names match the source so parity
-tests against `polybot-agent.db:trades` hold bit-for-bit.
-
-Hypothesis: at T-90 s of the 5-minute window, bet on sign(delta_bps) when
-≥3 of 4 AFML filters (frac-diff, ar_L, CUSUM rate, microprice) confirm
-the direction. Chainlink-adverse gate at 15 bps blocks against oracle
-divergence.
-
-Decision path (unchanged from source):
+Gate order (matches source):
   1. t_in_window in [entry_horizon ± tolerance]
   2. |delta_bps| >= delta_bps_min (direction source)
-  3. Chainlink divergence gate (hard skip if cl_delta_bps adverse > 15 bps)
-  4. fav_ask < max_price (price cap, side-dependent)
-  5. ≥ min_confirmations of {f1_fracdiff, f2_autocorr, f3_cusum,
-     f4_microprice, f6_candle} match side; f5_mc only counts if mc_shadow=false
+  3. Chainlink adverse-divergence gate (hard skip if cl_delta_bps against
+     side > cl_adverse_max_bps)
+  4. Chainlink concordance gate (cl must same-sign AND magnitude >=
+     ratio × |delta_bps|; disabled at ratio=0)
+  5. fav_ask band: min_fav_price <= fav_ask < max_price
+  6. Confirmation filters (soft-summed):
+       f1 fracdiff sign matches
+       f2 ar_{autocorr_lag} > 0
+       f3 cusum_event_rate > cusum_min_rate
+       f4 microprice side matches
+       f5 mc_bootstrap (optional, counted only if mc_shadow=False)
+       f6 candle (recent window: momentum_ok AND body_ratio >= doji_min)
+       f7 prior_trend (linear-fit slope over long_history window;
+          optional, disabled when prior_trend_window_s = 0)
+  7. Two-tier threshold: min_confirmations_high_price when fav_ask >=
+     high_price_threshold (poor R:R bucket asks for more quality),
+     else min_confirmations.
 """
 
 from __future__ import annotations
@@ -38,11 +42,19 @@ class TrendConfirmT1V1(StrategyBase):
         self.horizon_tolerance_s = float(p.get("horizon_tolerance_s", 2.0))
         self.delta_bps_min = float(p.get("delta_bps_min", 3.0))
         self.max_price = float(p.get("max_price", 0.80))
+        self.min_fav_price = float(p.get("min_fav_price", 0.0))
         self.min_confirmations = int(p.get("min_confirmations", 3))
+        self.high_price_threshold = float(p.get("high_price_threshold", 1.0))
+        self.min_confirmations_high_price = int(
+            p.get("min_confirmations_high_price", self.min_confirmations)
+        )
         self.cusum_min_rate = float(p.get("cusum_min_rate", 0.005))
         self.recent_window_s = float(p.get("recent_window_s", 60.0))
         self.doji_body_ratio_min = float(p.get("doji_body_ratio_min", 0.3))
+        self.prior_trend_window_s = float(p.get("prior_trend_window_s", 0.0))
+        self.prior_trend_min_slope_bps = float(p.get("prior_trend_min_slope_bps", 0.5))
         self.cl_adverse_max_bps = float(p.get("cl_adverse_max_bps", 15.0))
+        self.cl_concordance_min_ratio = float(p.get("cl_concordance_min_ratio", 0.0))
 
         # AFML feature params
         self.frac_d = float(p.get("frac_d", 0.4))
@@ -97,7 +109,7 @@ class TrendConfirmT1V1(StrategyBase):
                 },
             )
 
-        # Gate 1.5: Chainlink divergence
+        # Gate 1.5: Chainlink adverse divergence
         if (ctx.chainlink_price or 0) > 0 and ctx.open_price > 0:
             cl_delta_bps = (ctx.chainlink_price - ctx.open_price) / ctx.open_price * 10000
             if want_positive and cl_delta_bps < -self.cl_adverse_max_bps:
@@ -131,7 +143,29 @@ class TrendConfirmT1V1(StrategyBase):
                     },
                 )
 
-        # Gate 2: favored price cap
+            # Gate 1.6: Chainlink concordance
+            if self.cl_concordance_min_ratio > 0:
+                required_cl = self.cl_concordance_min_ratio * abs(ctx.delta_bps)
+                same_sign = (cl_delta_bps > 0) == want_positive
+                if not same_sign or abs(cl_delta_bps) < required_cl:
+                    return Decision(
+                        action=Action.SKIP,
+                        reason=(
+                            f"cl_concordance cl_Δ={cl_delta_bps:+.1f} "
+                            f"need same-sign ≥{required_cl:.1f} "
+                            f"(ratio={self.cl_concordance_min_ratio})"
+                        ),
+                        signal_features={
+                            "side": side.value,
+                            "delta_bps": ctx.delta_bps,
+                            "cl_delta_bps": round(cl_delta_bps, 2),
+                            "cl_concordance_required_bps": round(required_cl, 2),
+                            "cl_price": ctx.chainlink_price,
+                            "strike": ctx.open_price,
+                        },
+                    )
+
+        # Gate 2: favored price band (min_fav_price, max_price)
         fav_ask = ctx.pm_yes_ask if side is Side.YES_UP else ctx.pm_no_ask
         if not (0 < fav_ask < self.max_price):
             return Decision(
@@ -141,6 +175,19 @@ class TrendConfirmT1V1(StrategyBase):
                     "side": side.value,
                     "fav_ask": fav_ask,
                     "max_price": self.max_price,
+                },
+            )
+        if fav_ask < self.min_fav_price:
+            return Decision(
+                action=Action.SKIP,
+                reason=(
+                    f"fav_ask {fav_ask:.3f} < min_fav_price {self.min_fav_price} "
+                    f"({side.value} vs strong opposite consensus)"
+                ),
+                signal_features={
+                    "side": side.value,
+                    "fav_ask": fav_ask,
+                    "min_fav_price": self.min_fav_price,
                 },
             )
 
@@ -192,9 +239,46 @@ class TrendConfirmT1V1(StrategyBase):
             not_doji = False
             f6_candle = False
 
-        confirmations = sum([f1_fracdiff, f2_autocorr, f3_cusum, f4_microprice, f6_candle])
+        # f7: prior-trend filter — linear fit slope over long_history window.
+        # TEA TickContext may not expose `long_history` (each market's 5-min
+        # window is independent). Fall back to `recent_ticks` so the filter
+        # degrades to a within-window slope rather than AttributeError.
+        f7_prior_trend = False
+        prior_slope_bps = 0.0
+        prior_n_points = 0
+        long_history = getattr(ctx, "long_history", None)
+        if self.prior_trend_window_s > 0:
+            cutoff_ts = ctx.ts - self.prior_trend_window_s
+            if long_history:
+                pts = [(t, s) for (t, s, _cl) in long_history if t >= cutoff_ts and s > 0]
+            else:
+                pts = [
+                    (t.ts, t.spot_price)
+                    for t in ctx.recent_ticks
+                    if t.ts >= cutoff_ts and t.spot_price > 0
+                ]
+            prior_n_points = len(pts)
+            if prior_n_points >= 30:
+                ts0 = pts[0][0]
+                xs = [t - ts0 for (t, _s) in pts]
+                ys = [s for (_t, s) in pts]
+                n = len(xs)
+                mx = sum(xs) / n
+                my = sum(ys) / n
+                num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+                den = sum((xs[i] - mx) ** 2 for i in range(n))
+                slope = num / den if den > 0 else 0.0
+                ref_price = ys[-1] if ys[-1] > 0 else 1.0
+                slope_bps_per_s = (slope / ref_price) * 10000
+                prior_slope_bps = slope_bps_per_s * self.prior_trend_window_s
+                if abs(prior_slope_bps) >= self.prior_trend_min_slope_bps:
+                    f7_prior_trend = (prior_slope_bps > 0) == want_positive
 
-        # Monte Carlo (shadow by default — logged, not counted)
+        confirmations = sum(
+            [f1_fracdiff, f2_autocorr, f3_cusum, f4_microprice, f6_candle, f7_prior_trend]
+        )
+
+        # Monte Carlo
         mc_prob_up = -1.0
         f5_mc = False
         if self.mc_enabled:
@@ -228,9 +312,13 @@ class TrendConfirmT1V1(StrategyBase):
             "candle_body_ratio": round(body_ratio, 4),
             "candle_window_s": self.recent_window_s,
             "candle_n_ticks": len(recent_spots),
+            "prior_trend_slope_bps": round(prior_slope_bps, 3),
+            "prior_trend_n_points": prior_n_points,
+            "prior_trend_window_s": self.prior_trend_window_s,
+            "prior_trend_ok": bool(f7_prior_trend),
             **{k: round(v, 6) for k, v in feats.items()},
         }
-        total_filters = 5 if self.mc_shadow else 6
+        total_filters = 6 if self.mc_shadow else 7
         breakdown = StrategyBase.build_breakdown(
             delta_bps=round(ctx.delta_bps, 2),
             side_picked=side.value,
@@ -244,17 +332,28 @@ class TrendConfirmT1V1(StrategyBase):
                 f"{f6_candle} (mom_ok={momentum_ok}, body_ratio={body_ratio:.2f}, "
                 f"min={self.doji_body_ratio_min}, n={len(recent_spots)})"
             ),
+            f7_prior_trend=(
+                f"{f7_prior_trend} (slope={prior_slope_bps:+.2f}bps "
+                f"min=±{self.prior_trend_min_slope_bps:.2f} "
+                f"n={prior_n_points} win={self.prior_trend_window_s:.0f}s)"
+            ),
             confirmations=f"{confirmations}/{total_filters}",
             min_required=self.min_confirmations,
         )
 
-        if confirmations < self.min_confirmations:
+        required_confirmations = (
+            self.min_confirmations_high_price
+            if fav_ask >= self.high_price_threshold
+            else self.min_confirmations
+        )
+        if confirmations < required_confirmations:
             filter_list = [
                 ("fracdiff", f1_fracdiff),
                 ("autocorr", f2_autocorr),
                 ("cusum", f3_cusum),
                 ("microprice", f4_microprice),
                 ("candle", f6_candle),
+                ("prior_trend", f7_prior_trend),
             ]
             if not self.mc_shadow:
                 filter_list.append(("mc", f5_mc))
@@ -262,8 +361,9 @@ class TrendConfirmT1V1(StrategyBase):
             return Decision(
                 action=Action.SKIP,
                 reason=(
-                    f"confirm {confirmations}/{total_filters} < {self.min_confirmations} "
-                    f"(failed: {','.join(failed)})"
+                    f"confirm {confirmations}/{total_filters} < {required_confirmations} "
+                    f"(fav={fav_ask:.3f}, threshold={self.high_price_threshold}, "
+                    f"failed: {','.join(failed)})"
                 ),
                 signal_features=features,
                 signal_breakdown=breakdown,
