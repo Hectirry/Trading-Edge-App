@@ -18,6 +18,17 @@ promotion_auc_min = 0.55
 promotion_brier_max = 0.245
 promotion_ece_max = 0.05
 
+# bb_residual feature toggle. Default false → 21-feature vector loads
+# the legacy active model (pre-bbres training). Flip to true ONLY when
+# an active model row was trained with --include-bb-residual; otherwise
+# LGBRunner's n_features guard raises and the strategy refuses to fire.
+# Retro-compat with =false IS supported (build_vector branches on the
+# flag) — toggle is safe.
+# bb_residual_T_seconds: market window length (300 s for the BTC
+# up/down 5 m markets; only used when use_bb_residual_features=true).
+use_bb_residual_features = false
+bb_residual_T_seconds = 300.0
+
 [sizing]
 stake_usd = 5.0
 kelly_fraction = 0.25

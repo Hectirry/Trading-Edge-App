@@ -171,9 +171,11 @@ def test_range_regime_allows_both_directions() -> None:
 def test_feature_vector_attached_to_decision() -> None:
     model = _StubModel(p=0.70)
     d = _strat(model=model, macro=_StubMacro(_macro())).should_enter(_ctx(implied=0.40))
-    from trading.strategies.polymarket_btc5m._v2_features import FEATURE_NAMES
+    # _strat configures use_bb_residual_features=False by default, so the
+    # 21-feature base vector is what must appear in signal_features.
+    from trading.strategies.polymarket_btc5m._v2_features import feature_names
 
-    for name in FEATURE_NAMES:
+    for name in feature_names(False):
         assert name in d.signal_features, f"missing feature {name}"
 
 
@@ -197,9 +199,9 @@ def test_outside_entry_window_skips_before_model() -> None:
 
 def test_feature_vector_length_matches_feature_names() -> None:
     from trading.strategies.polymarket_btc5m._v2_features import (
-        FEATURE_NAMES,
         V2FeatureInputs,
         build_vector,
+        feature_names,
     )
 
     inp = V2FeatureInputs(
@@ -213,10 +215,17 @@ def test_feature_vector_length_matches_feature_names() -> None:
         depth_no=100.0,
         pm_imbalance=0.0,
         pm_spread_bps=50.0,
+        open_price=100.5,
     )
-    vec = build_vector(inp)
-    assert len(vec) == len(FEATURE_NAMES)
-    assert all(isinstance(v, float) for v in vec)
+    vec_base = build_vector(inp)
+    assert len(vec_base) == len(feature_names(False)) == 21
+    assert all(isinstance(v, float) for v in vec_base)
+
+    vec_bb = build_vector(inp, include_bb_residual=True)
+    assert len(vec_bb) == len(feature_names(True)) == 25
+    assert all(isinstance(v, float) for v in vec_bb)
+    # bb block lives at the tail.
+    assert vec_bb[:21] == vec_base
 
 
 def test_cyclic_time_features_bounded() -> None:

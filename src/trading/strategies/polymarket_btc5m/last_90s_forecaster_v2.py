@@ -18,9 +18,10 @@ from trading.engine.features import macro as macro_feat
 from trading.engine.strategy_base import StrategyBase
 from trading.engine.types import Action, Decision, Side, TickContext
 from trading.strategies.polymarket_btc5m._v2_features import (
-    FEATURE_NAMES,
+    FEATURE_NAMES,  # noqa: F401  -- re-exported for downstream tooling
     V2FeatureInputs,
     build_vector,
+    feature_names,
 )
 
 log = get_logger("strategy.last_90s_forecaster_v2")
@@ -44,6 +45,7 @@ class LGBRunner:
         import lightgbm as lgb  # lazy import so tests w/o lightgbm still import module
 
         self.booster = lgb.Booster(model_file=str(model_path))
+        self.n_features = int(self.booster.num_feature())
         self._calibrator = None
         if calibrator_path is not None and calibrator_path.exists():
             import pickle
@@ -54,6 +56,16 @@ class LGBRunner:
     def predict_proba(self, x: list[float]) -> float:
         import numpy as np
 
+        # Hard guard against silent feature-count drift between training
+        # and serving (e.g. enabling bb_residual on serving but loading a
+        # 21-feature model). The loud failure is preferable to a quiet
+        # garbage prediction.
+        if len(x) != self.n_features:
+            raise ValueError(
+                f"feature vector length {len(x)} does not match "
+                f"model.num_feature() {self.n_features} — train and serve "
+                f"must use the same FEATURE_NAMES order."
+            )
         arr = np.asarray([x], dtype=np.float64)
         p = float(self.booster.predict(arr)[0])
         if self._calibrator is not None:
@@ -123,6 +135,8 @@ class Last90sForecasterV2(StrategyBase):
             ema8_vs_ema34_pct=macro_snap.ema8_vs_ema34_pct,
         )
 
+        use_bb = bool(p.get("use_bb_residual_features", False))
+        bb_T = float(p.get("bb_residual_T_seconds", 300.0))
         inputs = V2FeatureInputs(
             as_of_ts=ctx.ts,
             spots_last_90s=spots,
@@ -134,11 +148,15 @@ class Last90sForecasterV2(StrategyBase):
             depth_no=ctx.pm_depth_no,
             pm_imbalance=ctx.pm_imbalance,
             pm_spread_bps=ctx.pm_spread_bps,
+            open_price=ctx.open_price,
+            t_in_window_s=ctx.t_in_window,
+            bb_T_seconds=bb_T,
         )
-        vec = build_vector(inputs)
+        vec = build_vector(inputs, include_bb_residual=use_bb)
+        names = feature_names(use_bb)
 
         if self.model is None:
-            features_dbg = dict(zip(FEATURE_NAMES, vec, strict=True))
+            features_dbg = dict(zip(names, vec, strict=True))
             return Decision(
                 Action.SKIP,
                 reason="shadow_mode_no_model",
@@ -148,7 +166,7 @@ class Last90sForecasterV2(StrategyBase):
         micro_prob = self.model.predict_proba(vec)
         edge = micro_prob - ctx.implied_prob_yes
 
-        features = dict(zip(FEATURE_NAMES, vec, strict=True))
+        features = dict(zip(names, vec, strict=True))
         features.update(
             {
                 "micro_prob": micro_prob,
