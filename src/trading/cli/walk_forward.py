@@ -84,14 +84,16 @@ def _parse_ts(s: str) -> datetime:
 # ---------------------------------------------------------- ML strategies
 
 
-async def _evaluate_fold_ml(strategy: str, fold: FoldWindow) -> dict:
+async def _evaluate_fold_ml(
+    strategy: str, fold: FoldWindow, *, include_bb_residual: bool = False
+) -> dict:
     if strategy == "hmm_regime_btc5m":
         return await _eval_hmm_fold(fold)
     if strategy == "last_90s_forecaster_v2":
-        return await _eval_last_90s_v2_fold(fold)
+        return await _eval_last_90s_v2_fold(fold, include_bb_residual=include_bb_residual)
     if strategy == "contest_ensemble_v1":
         # Same dataset + feature builder as v2 (ADR 0012, BiLSTM deferred).
-        return await _eval_last_90s_v2_fold(fold)
+        return await _eval_last_90s_v2_fold(fold, include_bb_residual=include_bb_residual)
     raise RuntimeError(f"no ML trainer for {strategy}")
 
 
@@ -175,7 +177,7 @@ async def _eval_hmm_fold(fold: FoldWindow) -> dict:
     }
 
 
-async def _eval_last_90s_v2_fold(fold: FoldWindow) -> dict:
+async def _eval_last_90s_v2_fold(fold: FoldWindow, *, include_bb_residual: bool = False) -> dict:
     from pathlib import Path as _Path
 
     from trading.cli.train_last90s import (
@@ -189,7 +191,12 @@ async def _eval_last_90s_v2_fold(fold: FoldWindow) -> dict:
     if not _Path(polybot_agent).exists():
         return _unvalidated_fold(fold, note="polybot-agent sqlite missing")
 
-    markets = _load_resolved_markets(_Path(polybot_agent), slug_encodes_open_ts=True)
+    # Labels re-derived from Binance OHLCV 1m (audit 2026-04-25). pg_dsn
+    # required by the new signature; markets without OHLCV at either end
+    # are dropped, never fallback-resolved against polybot chainlink.
+    markets = _load_resolved_markets(
+        _Path(polybot_agent), slug_encodes_open_ts=True, pg_dsn=_pg_dsn()
+    )
     for m in markets:
         m["_source"] = polybot_agent
 
@@ -214,11 +221,13 @@ async def _eval_last_90s_v2_fold(fold: FoldWindow) -> dict:
         is_markets,
         sqlite_sources=[_Path(polybot_agent)],
         candles_5m=candles,
+        include_bb_residual=include_bb_residual,
     )
     oos_samples = build_samples(
         oos_markets,
         sqlite_sources=[_Path(polybot_agent)],
         candles_5m=candles,
+        include_bb_residual=include_bb_residual,
     )
     if len(is_samples) < 40 or len(oos_samples) < 10:
         return _unvalidated_fold(
@@ -464,7 +473,11 @@ async def main_async(args: argparse.Namespace) -> int:
         )
         try:
             if strategy in ML_STRATEGIES:
-                result = await _evaluate_fold_ml(strategy, fold)
+                result = await _evaluate_fold_ml(
+                    strategy,
+                    fold,
+                    include_bb_residual=getattr(args, "include_bb_residual", False),
+                )
             else:
                 result = _replay_rules_fold(args, strategy, fold)
         except Exception as e:
@@ -519,6 +532,12 @@ def main() -> int:
     ap.add_argument("--slug-encodes-open-ts", action="store_true")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--tolerance", type=float, default=0.30)
+    ap.add_argument(
+        "--include-bb-residual",
+        action="store_true",
+        help="Use the 25-feature vector (bb_residual at tail) when "
+        "evaluating last_90s_forecaster_v2 folds. Default false.",
+    )
     args = ap.parse_args()
     return asyncio.run(main_async(args))
 

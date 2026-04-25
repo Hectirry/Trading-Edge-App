@@ -56,14 +56,91 @@ class Sample:
 # ------------------------------------------------------------------ IO
 
 
-def _load_resolved_markets(sqlite_path: Path, slug_encodes_open_ts: bool) -> list[dict]:
-    """Extract (slug, open_ts, close_ts, open_price, close_price) tuples
-    from one polybot-style sqlite.
+def _fetch_microstructure_for_window(
+    pg_dsn: str,
+    end_ts_unix: int,
+    window_s: int = 90,
+) -> tuple[list[tuple[float, float, str]], int]:
+    """For one market window, return (trades_in_window, baseline_24h_count).
 
-    polybot-agent and polybot-btc5m don't have a ``markets`` table — the
-    ground truth is ``trades`` (resolution, entry/exit ts, entry/exit
-    price) joined with ``ticks`` for open_price at window start. This
-    function handles both conventions:
+    ``trades_in_window``: list of (price, qty, side) for trades with
+    ``ts ∈ [end_ts - window_s, end_ts]``. Empty list when no trades.
+    ``baseline_24h_count``: count of trades in the trailing 24 h ending
+    at ``end_ts`` — used by ``trade_intensity``.
+    """
+    import psycopg2
+
+    conn = psycopg2.connect(pg_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT price::float8, qty::float8, side "
+                "FROM market_data.crypto_trades "
+                "WHERE exchange='binance' AND symbol='BTCUSDT' "
+                "AND ts BETWEEN to_timestamp(%s) AND to_timestamp(%s)",
+                (end_ts_unix - window_s, end_ts_unix),
+            )
+            trades = [(float(p), float(q), str(s)) for (p, q, s) in cur.fetchall()]
+            cur.execute(
+                "SELECT COUNT(*) FROM market_data.crypto_trades "
+                "WHERE exchange='binance' AND symbol='BTCUSDT' "
+                "AND ts BETWEEN to_timestamp(%s) AND to_timestamp(%s)",
+                (end_ts_unix - 86400, end_ts_unix),
+            )
+            row = cur.fetchone()
+            baseline = int(row[0]) if row else 0
+            return trades, baseline
+    finally:
+        conn.close()
+
+
+def _fetch_ohlcv_1m_closes(pg_dsn: str, t_min_unix: int, t_max_unix: int) -> dict[int, float]:
+    """Bulk-fetch BTCUSDT 1m closes in a unix-second range, indexed by
+    minute-floor unix timestamp. Used by ``_load_resolved_markets`` to
+    re-derive labels from Binance instead of the biased polybot
+    chainlink path (audit 2026-04-25)."""
+    if t_max_unix <= t_min_unix:
+        return {}
+    import psycopg2
+
+    conn = psycopg2.connect(pg_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXTRACT(EPOCH FROM ts)::bigint, close "
+                "FROM market_data.crypto_ohlcv "
+                "WHERE exchange='binance' AND symbol='BTCUSDT' AND interval='1m' "
+                "AND ts BETWEEN to_timestamp(%s) AND to_timestamp(%s)",
+                (t_min_unix, t_max_unix),
+            )
+            return {int(t): float(c) for (t, c) in cur.fetchall() if c is not None}
+    finally:
+        conn.close()
+
+
+def _load_resolved_markets(
+    sqlite_path: Path,
+    slug_encodes_open_ts: bool,
+    *,
+    pg_dsn: str,
+) -> list[dict]:
+    """Resolved-market list with open_price/close_price re-derived from
+    Binance ``market_data.crypto_ohlcv`` (1m, BTCUSDT, exchange='binance')
+    at minute(open_ts) / minute(close_ts) — NOT polybot's ``ticks.open_price``
+    nor last-tick ``chainlink_price``.
+
+    Why: audit on 2026-04-25 (see
+    ``estrategias/en-desarrollo/_audit_polybot_groundtruth.md``) showed
+    polybot's chainlink is frozen for 47 % of markets and
+    ``open_price == first_chainlink_price`` for 50 %, producing 40.5 %
+    of training labels inverted vs Binance. Markets without OHLCV
+    coverage at either end are *dropped*, never fallback-resolved —
+    same prefer-drop-over-poison policy as the fase 1 fix to
+    ``paper/backtest_loader.py``.
+
+    Polybot SQLite is still consulted: it tells us which markets
+    actually resolved (``trades.resolution IN ('win','loss')``) and the
+    slug-encoded open/close ts. Only the price fields are overridden.
 
     - ``slug_encodes_open_ts=True`` (BTC-Tendencia): slug's trailing
       number is window open ts, close = open + 300.
@@ -78,8 +155,8 @@ def _load_resolved_markets(sqlite_path: Path, slug_encodes_open_ts: bool) -> lis
     con = sqlite3.connect(f"file:{sqlite_path}?mode=ro&immutable=1", uri=True)
     con.row_factory = sqlite3.Row
     try:
-        # 1. Resolved trades give us which markets actually closed with a
-        #    known outcome. One row per distinct market_slug.
+        # Resolved trades give us which markets actually closed with a
+        # known outcome. One row per distinct market_slug.
         trades = con.execute(
             """
             SELECT DISTINCT market_slug
@@ -89,55 +166,66 @@ def _load_resolved_markets(sqlite_path: Path, slug_encodes_open_ts: bool) -> lis
             """
         ).fetchall()
         resolved_slugs = [r["market_slug"] for r in trades]
-        if not resolved_slugs:
-            return []
-
-        # 2. For each slug, pull the first + last tick so we can recover
-        #    open_price (at t_in_window ≈ 0) and close_price (≈ 300).
-        out: list[dict] = []
-        for slug in resolved_slugs:
-            try:
-                trailing_ts = int(slug.rsplit("-", 1)[-1])
-            except (ValueError, IndexError):
-                continue
-            if slug_encodes_open_ts:
-                open_ts = trailing_ts
-                close_ts = trailing_ts + 300
-            else:
-                close_ts = trailing_ts
-                open_ts = trailing_ts - 300
-
-            tick_open = con.execute(
-                "SELECT open_price, spot_price FROM ticks "
-                "WHERE market_slug = ? AND open_price IS NOT NULL AND open_price > 0 "
-                "ORDER BY t_in_window ASC LIMIT 1",
-                (slug,),
-            ).fetchone()
-            tick_close = con.execute(
-                "SELECT spot_price, chainlink_price FROM ticks "
-                "WHERE market_slug = ? "
-                "ORDER BY t_in_window DESC LIMIT 1",
-                (slug,),
-            ).fetchone()
-            if tick_open is None or tick_close is None:
-                continue
-            open_price = float(tick_open["open_price"])
-            close_price = float(tick_close["chainlink_price"] or tick_close["spot_price"] or 0)
-            if open_price <= 0 or close_price <= 0:
-                continue
-            out.append(
-                {
-                    "slug": slug,
-                    "condition_id": slug,  # polybot-agent doesn't store condition_id per market
-                    "open_ts": open_ts,
-                    "close_ts": close_ts,
-                    "open_price": open_price,
-                    "close_price": close_price,
-                }
-            )
-        return out
     finally:
         con.close()
+    if not resolved_slugs:
+        return []
+
+    # Discover (slug, open_ts, close_ts) without touching polybot prices.
+    discovered: list[tuple[str, int, int, int, int]] = []
+    minutes: set[int] = set()
+    for slug in resolved_slugs:
+        try:
+            trailing_ts = int(slug.rsplit("-", 1)[-1])
+        except (ValueError, IndexError):
+            continue
+        if slug_encodes_open_ts:
+            open_ts = trailing_ts
+            close_ts = trailing_ts + 300
+        else:
+            close_ts = trailing_ts
+            open_ts = trailing_ts - 300
+        open_min = (int(open_ts) // 60) * 60
+        close_min = (int(close_ts) // 60) * 60
+        discovered.append((slug, open_ts, close_ts, open_min, close_min))
+        minutes.add(open_min)
+        minutes.add(close_min)
+    if not discovered:
+        return []
+
+    closes = _fetch_ohlcv_1m_closes(pg_dsn, min(minutes), max(minutes))
+
+    out: list[dict] = []
+    n_dropped_gap = 0
+    for slug, open_ts, close_ts, open_min, close_min in discovered:
+        bin_open = closes.get(open_min)
+        bin_close = closes.get(close_min)
+        if bin_open is None or bin_close is None:
+            n_dropped_gap += 1
+            continue
+        out.append(
+            {
+                "slug": slug,
+                "condition_id": slug,
+                "open_ts": open_ts,
+                "close_ts": close_ts,
+                "open_price": bin_open,
+                "close_price": bin_close,
+            }
+        )
+    if n_dropped_gap:
+        log.info(
+            "_load_resolved_markets: dropped %d markets with OHLCV gap "
+            "(no 1m candle at minute(open_ts) or minute(close_ts))",
+            n_dropped_gap,
+        )
+    log.info(
+        "_load_resolved_markets: %s — kept %d / %d resolved",
+        sqlite_path.name,
+        len(out),
+        len(resolved_slugs),
+    )
+    return out
 
 
 def _load_ticks_for_slug(
@@ -199,12 +287,20 @@ def build_samples(
     *,
     sqlite_sources: list[Path],
     candles_5m: list[tuple[float, float, float, float]],
+    include_bb_residual: bool = False,
+    include_microstructure: bool = False,
+    pg_dsn: str | None = None,
+    microstructure_window_s: int = 90,
+    large_threshold_usd: float = 100_000.0,
 ) -> list[Sample]:
     """Assemble Sample rows at t=210 s for each market.
 
     1 Hz BTC spot comes from the polybot ``ticks`` table directly
     (no TEA 1 s ohlcv available in staging). Macro features pull from
-    TEA ``market_data.crypto_ohlcv`` 5 m candles.
+    TEA ``market_data.crypto_ohlcv`` 5 m candles. When
+    ``include_bb_residual`` is set, the 4 ``bb_*`` features are appended
+    at the tail (open_price → polybot ticks; vol → realized_vol_yz of
+    the 90 s window — same path the strategy uses at serving).
     """
     from trading.engine.features.macro import snapshot
     from trading.strategies.polymarket_btc5m._v2_features import (
@@ -223,7 +319,17 @@ def build_samples(
         closes = [c[3] for c in window]
         return snapshot(highs, lows, closes)
 
+    if include_microstructure and pg_dsn is None:
+        raise ValueError("include_microstructure=True requires pg_dsn for crypto_trades fetch")
+
+    if include_microstructure:
+        from trading.engine.features.binance_microstructure import (
+            Trade,
+            binance_microstructure_from_trades,
+        )
+
     samples: list[Sample] = []
+    n_dropped_micro = 0
     for m in markets:
         open_ts = int(m["open_ts"])
         close_ts = int(m["close_ts"])
@@ -248,8 +354,41 @@ def build_samples(
             depth_no=100.0,
             pm_imbalance=0.0,
             pm_spread_bps=50.0,
+            open_price=float(m["open_price"]),
+            t_in_window_s=210.0,
+            bb_T_seconds=300.0,
         )
-        vec = build_vector(inp)
+        vec = build_vector(inp, include_bb_residual=include_bb_residual)
+
+        if include_microstructure:
+            # Fetch the [as_of - window_s, as_of] trade set and 24h baseline
+            # for trade_intensity. as_of = open_ts + 210, so the window ends
+            # at the same as_of_ts the strategy uses at decision time.
+            ms_trades_raw, baseline_24h = _fetch_microstructure_for_window(
+                pg_dsn,
+                int(as_of),
+                window_s=microstructure_window_s,  # type: ignore[arg-type]
+            )
+            if not ms_trades_raw:
+                # Drop sample to keep training distribution honest — same
+                # prefer-drop-over-poison rule as the OHLCV-label fix.
+                n_dropped_micro += 1
+                continue
+            ms_trades = [Trade(price=p, qty=q, side=s) for (p, q, s) in ms_trades_raw]
+            ms_features = binance_microstructure_from_trades(
+                ms_trades,
+                baseline_trades_24h=baseline_24h,
+                window_s=microstructure_window_s,
+                large_threshold_usd=large_threshold_usd,
+            )
+            vec = vec + [
+                ms_features["bm_cvd_normalized"],
+                ms_features["bm_taker_buy_ratio"],
+                ms_features["bm_trade_intensity"],
+                ms_features["bm_large_trade_flag"],
+                ms_features["bm_signed_autocorr_lag1"],
+            ]
+
         label = 1 if float(m["close_price"]) > float(m["open_price"]) else 0
         samples.append(
             Sample(
@@ -259,6 +398,12 @@ def build_samples(
                 features=vec,
                 label=label,
             )
+        )
+    if include_microstructure:
+        log.info(
+            "build_samples: microstructure dropped %d / kept %d (no crypto_trades in window)",
+            n_dropped_micro,
+            len(samples),
         )
     return samples
 
@@ -334,7 +479,11 @@ def train(
         trial.set_user_attr("n_iter", model.best_iteration)
         return log_loss(y_val, model.predict(X_val, num_iteration=model.best_iteration))
 
-    study = optuna.create_study(direction="minimize")
+    # Seed the TPE sampler so a given (samples, seed) reproduces the same
+    # hyper-parameter trajectory — critical for comparing v2_clean vs
+    # v2_bbres without conflating Optuna search noise with feature lift.
+    sampler = optuna.samplers.TPESampler(seed=random_state)
+    study = optuna.create_study(direction="minimize", sampler=sampler)
     study.optimize(objective, n_trials=optuna_trials, timeout=time_budget_s)
     best = study.best_trial
 
@@ -428,26 +577,39 @@ def write_artefacts(
     training_period_from: datetime,
     training_period_to: datetime,
     promote: bool,
+    include_bb_residual: bool = False,
+    include_microstructure: bool = False,
+    feature_names_override: list[str] | None = None,
+    version_tag: str | None = None,
 ) -> dict:
     import asyncio
     import pickle
 
-    version = f"v2_{datetime.now(tz=UTC).strftime('%Y-%m-%dT%H-%M-%SZ')}"
+    if version_tag is None:
+        stamp = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+        version = f"v2_{stamp}"
+    else:
+        version = version_tag
     out_dir = Path("models") / name / version
     out_dir.mkdir(parents=True, exist_ok=True)
     trained["model"].save_model(str(out_dir / "model.lgb"))
     if trained["calibrator"] is not None:
         with open(out_dir / "calibrator.pkl", "wb") as f:
             pickle.dump(trained["calibrator"], f)
+    feat_module = __import__(
+        "trading.strategies.polymarket_btc5m._v2_features",
+        fromlist=["feature_names"],
+    )
+    if feature_names_override is not None:
+        feat_names: list[str] = list(feature_names_override)
+    else:
+        feat_names = list(feat_module.feature_names(include_bb_residual))
     meta = {
         "name": name,
         "version": version,
-        "feature_names": list(
-            __import__(
-                "trading.strategies.polymarket_btc5m._v2_features",
-                fromlist=["FEATURE_NAMES"],
-            ).FEATURE_NAMES
-        ),
+        "feature_names": feat_names,
+        "include_bb_residual": include_bb_residual,
+        "include_microstructure": include_microstructure,
         "metrics": trained["metrics"],
         "training_period_from": training_period_from.isoformat(),
         "training_period_to": training_period_to.isoformat(),
@@ -513,6 +675,33 @@ def main() -> int:
     ap.add_argument("--optuna-trials", type=int, default=200)
     ap.add_argument("--time-budget-s", type=int, default=3600)
     ap.add_argument("--promote", action="store_true")
+    ap.add_argument(
+        "--include-bb-residual",
+        action="store_true",
+        help="Append the 4 bb_residual features at the end of the vector "
+        "(produces a 25-feature model versioned `v2_bbres_<ts>`).",
+    )
+    ap.add_argument("--seed", type=int, default=42, help="LightGBM/Optuna seed.")
+    ap.add_argument(
+        "--strategy",
+        choices=["v2", "v3"],
+        default="v2",
+        help="v2 = 21 features (current). v3 = v2 + 5 Binance microstructure "
+        "features (CVD, taker_ratio, intensity, large_trade, signed_autocorr) "
+        "queried from market_data.crypto_trades.",
+    )
+    ap.add_argument(
+        "--microstructure-window-s",
+        type=int,
+        default=90,
+        help="Window size (seconds) for v3 microstructure features.",
+    )
+    ap.add_argument(
+        "--large-trade-threshold-usd",
+        type=float,
+        default=100_000.0,
+        help="Notional threshold for bm_large_trade_flag (default $100k).",
+    )
     args = ap.parse_args()
 
     t_from = datetime.fromisoformat(args.date_from).replace(tzinfo=UTC)
@@ -542,11 +731,20 @@ def main() -> int:
         polybot_agent_snap,
     )
 
-    log.info("loading resolved markets")
-    ma = _load_resolved_markets(Path(polybot_btc5m_snap), slug_encodes_open_ts=False)
+    pg_dsn = os.environ.get(
+        "DATABASE_URL",
+        f"postgresql://{os.environ.get('TEA_PG_USER','tea')}:"
+        f"{os.environ.get('TEA_PG_PASSWORD','')}@"
+        f"{os.environ.get('TEA_PG_HOST','tea-postgres')}:"
+        f"{os.environ.get('TEA_PG_PORT','5432')}/"
+        f"{os.environ.get('TEA_PG_DB','trading_edge')}",
+    )
+
+    log.info("loading resolved markets (open/close re-derived from Binance 1m)")
+    ma = _load_resolved_markets(Path(polybot_btc5m_snap), slug_encodes_open_ts=False, pg_dsn=pg_dsn)
     for m in ma:
         m["_source"] = polybot_btc5m_snap
-    mb = _load_resolved_markets(Path(polybot_agent_snap), slug_encodes_open_ts=True)
+    mb = _load_resolved_markets(Path(polybot_agent_snap), slug_encodes_open_ts=True, pg_dsn=pg_dsn)
     for m in mb:
         m["_source"] = polybot_agent_snap
     markets = [
@@ -561,15 +759,6 @@ def main() -> int:
     if len(markets) < 100:
         log.error("too few markets (%d) — need ≥ 100 for training", len(markets))
         return 2
-
-    pg_dsn = os.environ.get(
-        "DATABASE_URL",
-        f"postgresql://{os.environ.get('TEA_PG_USER','tea')}:"
-        f"{os.environ.get('TEA_PG_PASSWORD','')}@"
-        f"{os.environ.get('TEA_PG_HOST','tea-postgres')}:"
-        f"{os.environ.get('TEA_PG_PORT','5432')}/"
-        f"{os.environ.get('TEA_PG_DB','trading_edge')}",
-    )
     since_ts = int(t_from.timestamp()) - 3600
     until_ts = int(t_to.timestamp()) + 3600
     log.info("loading crypto_ohlcv 5 m for macro features")
@@ -584,22 +773,61 @@ def main() -> int:
         markets,
         sqlite_sources=sqlite_sources,
         candles_5m=candles,
+        include_bb_residual=args.include_bb_residual,
+        include_microstructure=(args.strategy == "v3"),
+        pg_dsn=pg_dsn,
+        microstructure_window_s=args.microstructure_window_s,
+        large_threshold_usd=args.large_trade_threshold_usd,
     )
-    log.info("feature samples: %d / markets=%d", len(samples), len(markets))
+    log.info(
+        "feature samples: %d / markets=%d / n_features=%d / strategy=%s / "
+        "include_bb_residual=%s / include_microstructure=%s",
+        len(samples),
+        len(markets),
+        len(samples[0].features) if samples else 0,
+        args.strategy,
+        args.include_bb_residual,
+        args.strategy == "v3",
+    )
     if len(samples) < 100:
         log.error("too few samples after feature build")
         return 3
 
     log.info("training — optuna_trials=%d budget_s=%d", args.optuna_trials, args.time_budget_s)
-    trained = train(samples, optuna_trials=args.optuna_trials, time_budget_s=args.time_budget_s)
+    trained = train(
+        samples,
+        optuna_trials=args.optuna_trials,
+        time_budget_s=args.time_budget_s,
+        random_state=args.seed,
+    )
     log.info("metrics: %s", json.dumps(trained["metrics"]))
 
+    stamp = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    feat_names_override: list[str] | None = None
+    if args.strategy == "v3":
+        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
+            feature_names_v3,
+        )
+
+        feat_names_override = list(feature_names_v3())
+        version_tag = f"v3_first_{stamp}"
+        model_name = "last_90s_forecaster_v3"
+    elif args.include_bb_residual:
+        version_tag = f"v2_bbres_{stamp}"
+        model_name = "last_90s_forecaster_v2"
+    else:
+        version_tag = None
+        model_name = "last_90s_forecaster_v2"
     out = write_artefacts(
-        name="last_90s_forecaster_v2",
+        name=model_name,
         trained=trained,
         training_period_from=t_from,
         training_period_to=t_to,
         promote=args.promote,
+        include_bb_residual=args.include_bb_residual,
+        include_microstructure=(args.strategy == "v3"),
+        feature_names_override=feat_names_override,
+        version_tag=version_tag,
     )
     log.info("artefacts: %s", json.dumps({k: v for k, v in out.items() if k != "metrics"}))
     return 0 if out["passes_gate"] else 1

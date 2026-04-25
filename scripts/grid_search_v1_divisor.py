@@ -154,16 +154,6 @@ def main() -> int:
     t_from = datetime.fromisoformat(args.date_from).replace(tzinfo=UTC)
     t_to = datetime.fromisoformat(args.date_to).replace(tzinfo=UTC)
 
-    ma = _load_resolved_markets(Path(btc5m_snap), slug_encodes_open_ts=False)
-    for m in ma: m["_source"] = btc5m_snap
-    mb = _load_resolved_markets(Path(agent_snap), slug_encodes_open_ts=True)
-    for m in mb: m["_source"] = agent_snap
-    markets = [
-        m for m in (ma + mb)
-        if t_from.timestamp() <= float(m["close_ts"]) <= t_to.timestamp()
-    ]
-    log.info("resolved markets: %d", len(markets))
-
     pg_dsn = (
         f"postgresql://{os.environ.get('TEA_PG_USER','tea')}:"
         f"{os.environ.get('TEA_PG_PASSWORD','')}@"
@@ -171,6 +161,16 @@ def main() -> int:
         f"{os.environ.get('TEA_PG_PORT','5432')}/"
         f"{os.environ.get('TEA_PG_DB','trading_edge')}"
     )
+
+    ma = _load_resolved_markets(Path(btc5m_snap), slug_encodes_open_ts=False, pg_dsn=pg_dsn)
+    for m in ma: m["_source"] = btc5m_snap
+    mb = _load_resolved_markets(Path(agent_snap), slug_encodes_open_ts=True, pg_dsn=pg_dsn)
+    for m in mb: m["_source"] = agent_snap
+    markets = [
+        m for m in (ma + mb)
+        if t_from.timestamp() <= float(m["close_ts"]) <= t_to.timestamp()
+    ]
+    log.info("resolved markets: %d", len(markets))
     candles = _load_ohlcv_5m(
         pg_dsn, int(t_from.timestamp()) - 3600, int(t_to.timestamp()) + 3600,
     )
