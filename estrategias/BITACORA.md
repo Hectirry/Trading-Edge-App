@@ -8,6 +8,20 @@ Formato: `## YYYY-MM-DD — tema corto` + 1-5 líneas.
 
 ---
 
+## 2026-04-25 — skills instaladas
+
+Bundled (vienen con Claude Code): simplify, review, security-review, init,
+loop, schedule, claude-api, update-config, keybindings-help,
+fewer-permission-prompts. Custom TEA bajo `.claude/skills/`:
+strategy-template, forensics, promotion-gate, backfill-pattern. Cada
+custom referencia los scripts/ADRs reales del proyecto. Marketplace
+Anthropic + community skills (test-driven-development,
+software-architecture, prompt-engineering) requieren `/plugin
+marketplace add anthropics/skills` ejecutado por el usuario; agente no
+puede invocar slash-commands de plugin.
+
+---
+
 ## 2026-04-25 — TAREA 1+2+3 stabilization sprint
 
 Tres deudas operacionales resueltas + ingest nuevo:
