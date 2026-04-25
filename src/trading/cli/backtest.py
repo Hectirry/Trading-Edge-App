@@ -90,6 +90,16 @@ async def _load_strategy(name: str, config: dict, macro_provider):
 
         runner = await load_runner_async()
         return Last90sForecasterV2(config, macro_provider=macro_provider, model=runner)
+    if name == "polymarket_btc5m/last_90s_forecaster_v3":
+        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
+            Last90sForecasterV3,
+        )
+        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
+            load_runner_async as v3_load_runner_async,
+        )
+
+        runner = await v3_load_runner_async()
+        return Last90sForecasterV3(config, macro_provider=macro_provider, model=runner)
     if name == "polymarket_btc5m/contest_ensemble_v1":
         from trading.strategies.polymarket_btc5m.contest_ensemble_v1 import (
             ContestEnsembleV1,

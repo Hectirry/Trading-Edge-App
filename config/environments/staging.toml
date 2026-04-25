@@ -36,6 +36,12 @@ params_file = "config/strategies/pbt5m_last_90s_forecaster_v1.toml"
 enabled = true
 params_file = "config/strategies/pbt5m_last_90s_forecaster_v2.toml"
 
+[strategies.last_90s_forecaster_v3]
+# v2 + 5 Binance microstructure features. Boots shadow (no v3 model
+# in research.models). Auto-shadow path is the same as v2.
+enabled = true
+params_file = "config/strategies/pbt5m_last_90s_forecaster_v3.toml"
+
 [strategies.contest_ensemble_v1]
 # ADR 0012 — Moondev contest A/B arm A. Boots with the explicit-rules
 # ensemble; upgrades to the LightGBM meta when a model row is promoted.
