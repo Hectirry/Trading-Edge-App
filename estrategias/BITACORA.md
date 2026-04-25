@@ -18,10 +18,28 @@ Tres deudas operacionales resueltas + ingest nuevo:
 - TAREA 3.7: nueva tabla `market_data.polymarket_prices_history` (hypertable) — schema en `infra/postgres/init/11_polymarket_prices_history.sql`.
 - TAREA 3.8: `scripts/backfill_polymarket_prices_history.py` con UA Chrome (Cloudflare 1010 bypass), idempotente vía PK + `_condition_ids_already_done`. Backfill en curso para los 865 markets BTC up/down 5m en 2026-04-22..2026-04-25.
 - TAREA 3.9: `train_last90s` añade flag `--use-real-implied-prob` que reemplaza el hardcode 0.5 con la price-history real, drop si no hay row.
-- TAREA 3.10 (re-train v3): se ejecutará tras backfill completo.
+- TAREA 3.10 (re-train v3 con `--use-real-implied-prob`):
+  **PENDIENTE**. El backfill de 865 markets toma ~15 min vs el budget
+  efectivo de la sesión; se inició desde el host (no muere con
+  restarts del container) y al cierre llevaba ~370/865 markets
+  procesados, ~3 min × ~33 markets/min restante. Cuando complete,
+  ejecutar:
+  ```
+  docker compose exec -T tea-engine python -m trading.cli.train_last90s \
+    --from 2026-04-22 --to 2026-04-25 \
+    --polybot-agent /btc-tendencia-data/polybot-agent.db \
+    --optuna-trials 50 --time-budget-s 600 --seed 42 \
+    --strategy v3 --use-real-implied-prob
+  ```
+  Comparar `v3_priceshist_<ts>` vs `v3_first_2026-04-25T05-34-52Z`
+  (AUC=0.659, n=149). Esperamos lift ≥0 si el real
+  `implied_prob_yes` aporta señal sobre el hardcode 0.5; lift ≤0
+  significa que la tesis "lead-lag PM/Binance" no resiste con datos
+  de 2-3 días (subset chico).
 
 Pre-trabajo: resolver FAIL del VPS (uncommitted local mods bloqueando rebase).
 Hicimos 7 commits temáticos + ff-merge feature → main + push, restaurando OK.
+VPS post-fix: status OK, próximo cron 06:00 UTC mañana.
 
 ## 2026-04-24 — inicialización
 
