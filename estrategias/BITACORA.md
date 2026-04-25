@@ -8,6 +8,22 @@ Formato: `## YYYY-MM-DD — tema corto` + 1-5 líneas.
 
 ---
 
+## 2026-04-25 — walk-forward v3_priceshist + v2_baseline (outcome B)
+
+Backfill aggTrades (8709 markets, 9.47M rows en ~50 min sobre la
+ventana 2026-03-22→2026-04-22) + restart tea-ingestor zombie + extend
+`walk_forward.py` con dispatch v3 + run 3 folds (IS=4d/OOS=1d) sobre
+los 7 d polybot-agent disponibles. Resultado: ningún fold entrena
+honestamente — 2 unvalidated (sample drops), 2 trivial (AUC train=0.5),
+1 marginal (n=23 AUC OOS 0.59). **Outcome B — hold/iterate**, NO
+promotion. Bloqueos no del modelo: prices_history sólo cubre 4/21-4/25
+(fold 0 v3 = IS=0), gap crypto_trades 4/25 00:00→15:32 (fold 2 v3
+n_oos=3). Para WF válido: extender prices_history a 4/04-4/20 +
+backfill aggTrades del slice 4/24 23:59→4/25 15:32. Detalle en
+`estrategias/en-desarrollo/last_90s_forecaster_v3.md::Walk-forward 2026-04-25`.
+
+---
+
 ## 2026-04-25 — skills instaladas
 
 Bundled (vienen con Claude Code): simplify, review, security-review, init,

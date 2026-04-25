@@ -190,13 +190,63 @@ Lectura clave:
 - `bm_taker_buy_ratio` sigue fuera del top-10 (rank 13). Hipótesis: lo
   subsume CVD (ambos miden direccionalidad del taker tape).
 
+## Walk-forward 2026-04-25 (3 folds, IS=4d/OOS=1d/step=1d)
+
+Configuración B+D del prompt (3 folds dentro de los 7 d disponibles
+en `polybot-agent.db`, en lugar del 3×7d original que requeriría
+21+ d de spot ticks no disponibles). Universe = 471 markets resueltos
+(540 - 69 dropped por OHLCV gap).
+
+### Resultados
+
+| | fold 0 (IS 4/18→4/22, OOS 4/22→4/23) | fold 1 (IS 4/19→4/23, OOS 4/23→4/24) | fold 2 (IS 4/20→4/24, OOS 4/24→4/25) |
+|---|---|---|---|
+| **v2_baseline** | unvalidated (IS<40 post-feature) | n_oos=105, AUC IS=0.500, AUC OOS=0.500, Brier=0.246 → stable (trivial) | n_oos=23, AUC IS=0.614, AUC OOS=0.591, Brier=0.250 → stable |
+| **v3_priceshist** | unvalidated (IS=0 — todos los samples dropados por implied_prob faltante en 4/18-4/22) | n_oos=100, AUC IS=0.500, AUC OOS=0.500, Brier=0.244 → stable (trivial) | unvalidated (n_oos=3 — gap crypto_trades 4/25 00:00→15:32 borra microstructure) |
+
+run_id v2 `a96d1246-c5b1-497d-871a-b7db49799b0d`,
+run_id v3 `4a964572-f51f-4eca-8e97-393a4ea8c8cf` en
+`research.walk_forward_runs`.
+
+### Outcome: **B — hold / iterate**
+
+**Walk-forward inconcluso.** Ningún fold entrenó honestamente:
+- 2 / 6 fold-runs unvalidated por sample drops (insufficient post-feature).
+- 2 / 6 fold-runs trivial (AUC train = 0.5 = LightGBM no aprendió nada
+  con n ~ 60-100 samples y 21-26 features).
+- 1 / 6 v2 fold marginal (n=23, AUC OOS = 0.591) — sólo este fold tiene
+  algo de señal y n es demasiado pequeño para ser concluyente.
+
+### Bloqueos identificados (no de modelo, de datos)
+
+1. **`polymarket_prices_history` cubre sólo 2026-04-21 → 2026-04-25.**
+   Fold 0 IS [4/18-4/22] → cero samples para v3 porque
+   `--use-real-implied-prob` dropa todos los markets sin libro
+   histórico. Fix: extender backfill prices_history a 2026-04-04
+   → 2026-04-20 (~16 d, ~1-2 h al pace original).
+2. **Gap `crypto_trades` 2026-04-25 00:00 → 15:32** (15.5 h, post-WS
+   muerte). Fold 2 v3 OOS hereda este gap → 20/23 markets dropados
+   por microstructure. Fix: backfill aggTrades del slice 4/24 23:59
+   → 4/25 15:32 (~15 min).
+3. **Universo 7 d demasiado pequeño** para 3×7d real. Fix de fondo:
+   sintetizar 1 Hz spot desde `crypto_trades` para abandonar la
+   dependencia polybot-agent ticks (~1-2 h código + tests).
+
+Hasta resolver (1) + (2), el walk-forward no es una evaluación válida
+ni del modelo ni de su estabilidad temporal. **No mover `is_active`
+en ninguna versión hasta repetir.**
+
 ## Veredicto
 
-**Hipótesis validada** según los criterios definidos:
+**Hipótesis validada en train/test single-split** (TAREA 3.10):
 - Lift AUC +10.5 pp ≥ 3 pp ✓
 - Brier mejora ≥ no degrada ✓
 - ECE 0.147 ≤ 0.20 ✓ (gate sample-size-aware) ✓
 - 3 / 5 microstructure en top-10 ✓
+
+**Walk-forward 3 folds 2026-04-25: outcome B — hold/iterate** por
+gaps de datos pre-existentes en prices_history y crypto_trades.
+Bloquea promoción hasta extender backfills.
 
 Re-train con implied_prob real (TAREA 3.10) levanta AUC un +7.2 pp
 adicional sobre v3_first y mete `implied_prob_yes` al rank #2. La

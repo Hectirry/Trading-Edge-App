@@ -57,6 +57,7 @@ log = get_logger("cli.walk_forward")
 ML_STRATEGIES = {
     "hmm_regime_btc5m",
     "last_90s_forecaster_v2",
+    "last_90s_forecaster_v3",
     "contest_ensemble_v1",
 }
 
@@ -91,6 +92,8 @@ async def _evaluate_fold_ml(
         return await _eval_hmm_fold(fold)
     if strategy == "last_90s_forecaster_v2":
         return await _eval_last_90s_v2_fold(fold, include_bb_residual=include_bb_residual)
+    if strategy == "last_90s_forecaster_v3":
+        return await _eval_last_90s_v3_fold(fold)
     if strategy == "contest_ensemble_v1":
         # Same dataset + feature builder as v2 (ADR 0012, BiLSTM deferred).
         return await _eval_last_90s_v2_fold(fold, include_bb_residual=include_bb_residual)
@@ -228,6 +231,108 @@ async def _eval_last_90s_v2_fold(fold: FoldWindow, *, include_bb_residual: bool 
         sqlite_sources=[_Path(polybot_agent)],
         candles_5m=candles,
         include_bb_residual=include_bb_residual,
+    )
+    if len(is_samples) < 40 or len(oos_samples) < 10:
+        return _unvalidated_fold(
+            fold,
+            n_trades_oos=len(oos_samples),
+            note="post-feature-build insufficient",
+        )
+
+    trained = train(is_samples, optuna_trials=40, time_budget_s=120)
+
+    import numpy as np
+    from sklearn.metrics import brier_score_loss, roc_auc_score
+
+    X_oos = np.asarray([s.features for s in oos_samples], dtype=np.float64)
+    y_oos = np.asarray([s.label for s in oos_samples], dtype=np.int32)
+    probs = trained["model"].predict(X_oos)
+    auc_oos = float(roc_auc_score(y_oos, probs)) if len(set(y_oos)) == 2 else None
+    brier_oos = float(brier_score_loss(y_oos, probs))
+    auc_is = trained["metrics"].get("test_auc")
+    verdict = classify_fold(
+        auc_is=auc_is,
+        auc_oos=auc_oos,
+        n_trades_oos=len(oos_samples),
+    )
+    return {
+        "fold": fold.idx,
+        "is_from": fold.is_from.isoformat(),
+        "is_to": fold.is_to.isoformat(),
+        "oos_from": fold.oos_from.isoformat(),
+        "oos_to": fold.oos_to.isoformat(),
+        "auc_is": auc_is,
+        "auc_oos": auc_oos,
+        "brier_oos": brier_oos,
+        "n_trades_oos": len(oos_samples),
+        "pnl_oos": None,
+        "verdict": verdict,
+    }
+
+
+async def _eval_last_90s_v3_fold(fold: FoldWindow) -> dict:
+    """Walk-forward fold for v3_priceshist: 26 features = v2 base (21) +
+    5 Binance microstructure (CVD, taker_ratio, intensity, large, signed
+    autocorr) + real implied_prob_yes from polymarket_prices_history.
+
+    Same polybot-agent SQLite universe as v2 (the Postgres tables
+    polymarket_markets has wider coverage but the spot tick history
+    needed for momentum/realized_vol features only lives in polybot
+    SQLite — bridging that requires synthesising 1 Hz spot from
+    crypto_trades, deferred to a follow-up).
+    """
+    from pathlib import Path as _Path
+
+    from trading.cli.train_last90s import (
+        _load_ohlcv_5m,
+        _load_resolved_markets,
+        build_samples,
+        train,
+    )
+
+    polybot_agent = "/btc-tendencia-data/polybot-agent.db"
+    if not _Path(polybot_agent).exists():
+        return _unvalidated_fold(fold, note="polybot-agent sqlite missing")
+
+    pg_dsn = _pg_dsn()
+    markets = _load_resolved_markets(
+        _Path(polybot_agent), slug_encodes_open_ts=True, pg_dsn=pg_dsn
+    )
+    for m in markets:
+        m["_source"] = polybot_agent
+
+    def _in(m, a, b):
+        return a.timestamp() <= float(m["close_ts"]) <= b.timestamp()
+
+    is_markets = [m for m in markets if _in(m, fold.is_from, fold.is_to)]
+    oos_markets = [m for m in markets if _in(m, fold.oos_from, fold.oos_to)]
+    if len(is_markets) < 50 or len(oos_markets) < 10:
+        return _unvalidated_fold(
+            fold,
+            n_trades_oos=len(oos_markets),
+            note=f"is={len(is_markets)} oos={len(oos_markets)}",
+        )
+
+    candles = _load_ohlcv_5m(
+        pg_dsn,
+        int(fold.is_from.timestamp()) - 3600,
+        int(fold.oos_to.timestamp()) + 3600,
+    )
+    is_samples = build_samples(
+        is_markets,
+        sqlite_sources=[_Path(polybot_agent)],
+        candles_5m=candles,
+        include_microstructure=True,
+        use_real_implied_prob=True,
+        pg_dsn=pg_dsn,
+    )
+    oos_samples = build_samples(
+        oos_markets,
+        sqlite_sources=[_Path(polybot_agent)],
+        candles_5m=candles,
+        include_microstructure=True,
+        use_real_implied_prob=True,
+        pg_dsn=pg_dsn,
     )
     if len(is_samples) < 40 or len(oos_samples) < 10:
         return _unvalidated_fold(
