@@ -77,12 +77,11 @@ async def _shared_providers_refresh_loop(
     chainlink_provider,
     liq_provider,
     macro_provider,
+    microstructure_provider=None,
 ) -> None:
-    """Keep the Chainlink + liquidation + macro caches warm.
-
-    Chainlink cache TTL short (5 s), liq clusters medium (30 s), macro
-    candles slow (every 5 min). One loop, staggered cadence via
-    counters, so we keep a single asyncio task per strategy needs.
+    """Keep the Chainlink + liquidation + macro + microstructure caches
+    warm. Chainlink TTL short (5 s), liq clusters medium (30 s), macro
+    candles slow (every 5 min), microstructure 5 s (matches loop tick).
     """
     import asyncio as _asyncio
 
@@ -90,6 +89,8 @@ async def _shared_providers_refresh_loop(
     while True:
         try:
             await chainlink_provider.refresh()
+            if microstructure_provider is not None:
+                await microstructure_provider.refresh()
             if i % 6 == 0:
                 await liq_provider.refresh()
             if i % 60 == 0:
@@ -108,6 +109,7 @@ async def _load_strategy(
     hmm_detector=None,
     chainlink_provider=None,
     liq_provider=None,
+    microstructure_provider=None,
 ) -> StrategyBase:
     if name == "trend_confirm_t1_v1":
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import TrendConfirmT1V1
@@ -136,7 +138,12 @@ async def _load_strategy(
         )
 
         runner = await v3_load_runner_async()
-        return Last90sForecasterV3(cfg, macro_provider=macro_provider, model=runner)
+        return Last90sForecasterV3(
+            cfg,
+            macro_provider=macro_provider,
+            model=runner,
+            microstructure_provider=microstructure_provider,
+        )
     if name == "bb_residual_ofi_v1":
         from trading.strategies.polymarket_btc5m.bb_residual_ofi_v1 import (
             BBResidualOFIV1,
@@ -239,6 +246,21 @@ async def main_async() -> None:
     except Exception as e:
         log.warning("paper_engine.shared_providers.refresh_err", err=str(e))
 
+    # v3 microstructure cache. Refreshed every 5 s in
+    # _shared_providers_refresh_loop. fetch() is sync (called from
+    # should_enter); cache is fed by an async refresh that pulls the
+    # last 90 s of crypto_trades.
+    from trading.strategies.polymarket_btc5m._microstructure_provider import (
+        PostgresMicrostructureProvider,
+    )
+
+    microstructure_provider = PostgresMicrostructureProvider()
+    try:
+        await microstructure_provider.refresh()
+        log.info("paper_engine.microstructure_provider.ready")
+    except Exception as e:
+        log.warning("paper_engine.microstructure_provider.refresh_err", err=str(e))
+
     # Try to load the HMM regime detector from the active
     # research.models row. Returns a NullHMMRegimeDetector if no row
     # exists — strategies degrade cleanly.
@@ -259,6 +281,7 @@ async def main_async() -> None:
             hmm_detector=hmm_detector,
             chainlink_provider=chainlink_provider,
             liq_provider=liq_provider,
+            microstructure_provider=microstructure_provider,
         )
         risk = RiskManager({"risk": strategy_cfg["risk"]})
         fill_params = FillParams(
@@ -301,6 +324,7 @@ async def main_async() -> None:
                 chainlink_provider,
                 liq_provider,
                 macro_provider,
+                microstructure_provider=microstructure_provider,
             ),
             name="shared_providers_refresh",
         ),

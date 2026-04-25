@@ -5,7 +5,9 @@ Orden: activas → en-desarrollo → descartadas. Mantener ≤ 1 pantalla.
 
 ## Activas
 
-_(ninguna todavía — las que pasen criterios se listan aquí)_
+| nombre | family | último verdict | último resultado | resumen |
+|---|---|---|---|---|
+| last_90s_forecaster_v3 | polymarket_btc5m | activa (paper, gate-bypass declarado) | 2026-04-25 21:01 UTC | v3_priceshist en paper. AUC single-split 0.7311 + microstructure provider wired. WF 3 folds inconcluso (B); promoción es bypass consciente del gate. Revertir si paper PnL trailing 7d ≤ 0 o WR < 50% sobre ≥30 fills. |
 
 ## En desarrollo
 
@@ -13,7 +15,6 @@ _(ninguna todavía — las que pasen criterios se listan aquí)_
 |---|---|---|---|---|
 | bb_residual_ofi_v1 | polymarket_btc5m | — | — | BB no-drift prior + OFI/microestructura ensemble shrinkage; Sharpe-gated, fee convexa. Shadow scaffold (sin modelo entrenado). |
 | cvd_confirm_t2_v0 | polymarket_btc5m | — | — | CVD 1m como 7º gate de confirmación sobre trend_confirm_t1_v1. |
-| last_90s_forecaster_v3 | polymarket_btc5m | hold/iterate | 2026-04-25 (WF 3 folds: B — gaps datos, no promotion) | v2 + 5 microstructure + libro PM real. AUC 0.7311 single-split pero WF inconcluso (prices_history sólo 4/21-4/25 + gap crypto_trades 4/25). Requiere extender backfills antes de re-evaluar. |
 
 ## Descartadas
 

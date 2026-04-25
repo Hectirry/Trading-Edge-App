@@ -236,6 +236,68 @@ Hasta resolver (1) + (2), el walk-forward no es una evaluación válida
 ni del modelo ni de su estabilidad temporal. **No mover `is_active`
 en ninguna versión hasta repetir.**
 
+## Promotion 2026-04-25 — bypass del gate (paper, no real money)
+
+**Decisión consciente**: promovido a `is_active=true` con WF outcome B
+(no A). El gate exige walk-forward stability ≥ 0.6 + ≥ 7 d shadow + paper
+PnL ≥ 0; ninguno de los tres se cumple. Bypass autorizado por el dueño
+del proyecto (Hectirry), entendiendo que:
+
+- Es **paper**, no dinero real. Riesgo = malos datos en
+  `research.backtests` + tiempo, no capital.
+- Si el modelo tiene un sesgo de construcción no detectado (igual que
+  `bb_residual` que falsificamos), el paper PnL irá a perder.
+- La señal de "promover" es la `tea-promotion-gate` skill, que
+  explícitamente alerta contra esto. Saltar el gate aquí es un caso
+  declarado, no un olvido.
+
+### Wiring de serving (TAREA pre-promotion)
+
+Antes de flippear `is_active` se wiriteó el `microstructure_provider`
+que faltaba en serving. El strategy.py original ([line 152-161](src/trading/strategies/polymarket_btc5m/last_90s_forecaster_v3.py#L152-L161))
+documenta: *"the engine has not wired a sync microstructure provider
+yet (planned in promotion sprint)"*. Sin esto, las predicciones se
+hacían sobre vectores con microstructure sentinel ≠ training (= train/serve
+skew, recipe para falsificación silenciosa).
+
+Implementado:
+- `src/trading/strategies/polymarket_btc5m/_microstructure_provider.py`
+  — `PostgresMicrostructureProvider` con cache async-refreshed cada 5 s
+  (matches loop tick existente). Sync `fetch(ts)` retorna features de
+  `binance_microstructure_features()` fresca, con `max_staleness_s=30`
+  → fallback a sentinels si la cache no se refrescó (defensivo).
+- `paper_engine.py` extendido: instancia el provider al boot,
+  `await refresh()` antes de `_load_strategy`, lo pasa por kwarg, lo
+  añade al `_shared_providers_refresh_loop`.
+
+### Operativa
+
+```
+research.models WHERE name='last_90s_forecaster_v3' AND is_active=true
+→ v3_priceshist_2026-04-25T12-16-50Z
+
+config/strategies/pbt5m_last_90s_forecaster_v3.toml: shadow=false
+tea-engine restart 2026-04-25 21:01:49 UTC, modelo cargado OK,
+microstructure_provider.ready, paper.driver.started paused=false.
+```
+
+### Monitoring + revert criterion
+
+Revisa diariamente:
+
+```sql
+SELECT date_trunc('day', f.ts) AS day, COUNT(*) AS n, SUM((f.metadata->>'pnl')::float) AS pnl
+FROM trading.fills f JOIN trading.orders o ON f.order_id=o.id
+WHERE o.strategy_id='last_90s_forecaster_v3' AND f.ts >= now() - interval '7 days'
+GROUP BY day ORDER BY day;
+```
+
+**Revertir** (set `shadow=true` + `is_active=false`) si cualquiera:
+- Paper PnL trailing 7 d ≤ 0
+- Win rate ≤ 0.50 sobre ≥ 30 fills
+- `microstructure.stale` log aparece > 1% de los ticks (cache no se refresca)
+- Cualquier exception traceback v3 en logs
+
 ## Veredicto
 
 **Hipótesis validada en train/test single-split** (TAREA 3.10):
@@ -246,7 +308,10 @@ en ninguna versión hasta repetir.**
 
 **Walk-forward 3 folds 2026-04-25: outcome B — hold/iterate** por
 gaps de datos pre-existentes en prices_history y crypto_trades.
-Bloquea promoción hasta extender backfills.
+
+**Promotion 2026-04-25**: bypass del gate, `is_active=true` en paper
+con monitoring + revert criterion documentado arriba. No promoción
+real-money hasta cumplir el gate completo.
 
 Re-train con implied_prob real (TAREA 3.10) levanta AUC un +7.2 pp
 adicional sobre v3_first y mete `implied_prob_yes` al rank #2. La

@@ -8,6 +8,23 @@ Formato: `## YYYY-MM-DD — tema corto` + 1-5 líneas.
 
 ---
 
+## 2026-04-25 — promoción v3_priceshist a paper (bypass gate, riesgo declarado)
+
+`is_active=true` flippeado en `research.models` para
+`v3_priceshist_2026-04-25T12-16-50Z`. `shadow=false` en TOML.
+**Bypass consciente del `tea-promotion-gate`**: WF fue B (no A);
+≥ 7 d de shadow no se cumplen. Justificación: es paper, no real
+money. Wiring pre-promotion: `_microstructure_provider.py` nuevo +
+`paper_engine.py` lo construye al boot, refresca cada 5 s en
+`_shared_providers_refresh_loop`, lo pasa a `Last90sForecasterV3`. Sin
+esto el strategy serving emitía sentinels en el tail de microstructure
+= train/serve skew silencioso. Restart 21:01 UTC primer boot, luego
+21:05 (rebuild de imagen). Logs: `microstructure_provider.ready` ✓,
+`v3.no_active_model_row` ausente ✓. Monitoring SQL + revert criterion
+documentados en `estrategias/en-desarrollo/last_90s_forecaster_v3.md::Promotion 2026-04-25`.
+
+---
+
 ## 2026-04-25 — walk-forward v3_priceshist + v2_baseline (outcome B)
 
 Backfill aggTrades (8709 markets, 9.47M rows en ~50 min sobre la

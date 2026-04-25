@@ -57,6 +57,8 @@ loss_pause_duration_minutes = 30
 capital_usd = 1000.0
 daily_loss_alert_pct = 0.03
 daily_loss_pause_pct = 0.05
-# v3 nace shadow: no hay fila is_active=true en research.models, y la
-# decisión de promoción es post-walk-forward + shadow ≥ 7 d.
-shadow = true
+# 2026-04-25 — bypass del promotion gate: WF outcome B (inconcluso por
+# gaps de datos prices_history y crypto_trades). Promoción consciente
+# de riesgo en paper, no real money. Revertir a shadow=true si paper
+# PnL trailing 7 d ≤ 0 o WR < 0.50. Detalle en BITACORA.
+shadow = false
