@@ -141,6 +141,24 @@ def run_backtest(
     n_markets = 0
     decision_counts: dict[str, int] = {}
 
+    # Settle dispatch: loaders that explicitly opt-in via the
+    # ``provides_settle_prices`` capability supply a canonical settle dict
+    # (see PaperTicksLoader.market_outcomes). Polybot does not set that
+    # marker, so it keeps the legacy `_final_price_of(ticks)` path.
+    # Forensic context: paper_ticks ships a chainlink_price that freezes
+    # for hours on Polygon EAC, which made the legacy path settle ~64%
+    # of trades wrong. See _forensics_trend_confirm_t1_v1.md.
+    settle_prices: dict[str, float] | None = None
+    if getattr(loader, "provides_settle_prices", False):
+        settle_prices = loader.market_outcomes(from_ts, to_ts)
+        log.info(
+            "backtest.settle_source",
+            source="loader.market_outcomes",
+            n_settles=len(settle_prices),
+        )
+    else:
+        log.info("backtest.settle_source", source="last_tick.chainlink_or_spot")
+
     for slug, ticks in loader.iter_markets(from_ts, to_ts):
         if not ticks:
             continue
@@ -158,7 +176,24 @@ def run_backtest(
                 break
         if open_price_market == 0.0:
             open_price_market = float(ticks[0].spot_price or 0.0)
-        final_price = _final_price_of(ticks)
+        if settle_prices is not None:
+            # Loader provides canonical settle prices; trust it. A missing
+            # slug means the OHLCV anchor for this market wasn't ingested
+            # — skip the market rather than falling back to a stale
+            # chainlink reading (the bug that produced the 9.7% win-rate
+            # FAIL on 2026-04-23). The fallback to chainlink is
+            # intentionally NOT attempted here.
+            settle = settle_prices.get(slug)
+            if settle is None:
+                log.warning(
+                    "backtest.settle_missing",
+                    slug=slug,
+                    reason="no canonical settle price; market skipped",
+                )
+                continue
+            final_price = settle
+        else:
+            final_price = _final_price_of(ticks)
 
         position: dict | None = None
         signal_first_seen: float | None = None
