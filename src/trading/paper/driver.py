@@ -88,10 +88,53 @@ class PaperDriver:
         if reason:
             self._eval_skip_reasons[reason] = self._eval_skip_reasons.get(reason, 0) + 1
 
+    async def _bootstrap_daily_pnl_from_db(self) -> None:
+        """At boot, set ``self._daily_pnl`` and ``self._daily_trades`` to the
+        trailing-24 h sums in ``trading.fills`` for *this* strategy. Without
+        this, reconciliation loop alerts spuriously after every restart
+        (db_settled has 24 h of history; local in-RAM ledger starts at 0,
+        delta ≈ pre-restart settled PnL). See BITACORA 2026-04-25 deuda.
+        """
+        try:
+            async with acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT
+                        COALESCE(SUM(
+                            CASE WHEN f.metadata::jsonb->>'kind' = 'settle'
+                                 THEN ((f.metadata::jsonb->>'pnl')::numeric)
+                                 ELSE 0 END), 0) AS settled_pnl,
+                        COUNT(*) FILTER (
+                            WHERE f.metadata::jsonb->>'kind' = 'entry'
+                        ) AS n_entries
+                    FROM trading.fills f
+                    JOIN trading.orders o ON o.order_id = f.order_id
+                    WHERE f.mode='paper'
+                      AND o.strategy_id = $1
+                      AND f.ts >= (now() - interval '1 day')
+                    """,
+                    self.strategy.name,
+                )
+            self._daily_pnl = float(row["settled_pnl"] or 0.0) if row else 0.0
+            self._daily_trades = int(row["n_entries"] or 0) if row else 0
+            log.info(
+                "paper.driver.bootstrap_daily_pnl",
+                strategy=self.strategy.name,
+                daily_pnl=self._daily_pnl,
+                daily_trades=self._daily_trades,
+            )
+        except Exception as e:
+            log.warning(
+                "paper.driver.bootstrap_daily_pnl.err",
+                err=str(e),
+                strategy=self.strategy.name,
+            )
+
     async def run(self) -> None:
         self._redis = redis.from_url(self.redis_url, decode_responses=False)
         await self._rehydrate_pause_state()
         await self._rehydrate_trade_taken()
+        await self._bootstrap_daily_pnl_from_db()
         self.strategy.on_start()
         log.info(
             "paper.driver.started",
@@ -695,21 +738,29 @@ class PaperDriver:
             await asyncio.sleep(self.cfg.reconciliation_interval_s)
             try:
                 async with acquire() as conn:
+                    # Filter by strategy_id — pre-2026-04-25 the query
+                    # aggregated ALL paper fills, which always disagreed
+                    # with this driver's per-strategy in-RAM ledger and
+                    # produced false-positive reconciliation.fail.
                     row = await conn.fetchrow(
                         """
                         SELECT COALESCE(SUM(
-                            CASE WHEN metadata::jsonb->>'kind' = 'settle'
-                                 THEN ((metadata::jsonb->>'pnl')::numeric)
+                            CASE WHEN f.metadata::jsonb->>'kind' = 'settle'
+                                 THEN ((f.metadata::jsonb->>'pnl')::numeric)
                                  ELSE 0 END), 0) AS settled_pnl,
                                COUNT(*) FILTER (
-                                   WHERE metadata::jsonb->>'kind' = 'entry'
+                                   WHERE f.metadata::jsonb->>'kind' = 'entry'
                                  ) AS entries_today,
                                COUNT(*) FILTER (
-                                   WHERE metadata::jsonb->>'kind' = 'settle'
+                                   WHERE f.metadata::jsonb->>'kind' = 'settle'
                                  ) AS exits_today
-                        FROM trading.fills
-                        WHERE mode='paper' AND ts >= (now() - interval '1 day')
-                        """
+                        FROM trading.fills f
+                        JOIN trading.orders o ON o.order_id = f.order_id
+                        WHERE f.mode='paper'
+                          AND o.strategy_id = $1
+                          AND f.ts >= (now() - interval '1 day')
+                        """,
+                        self.strategy.name,
                     )
                 db_settled = float(row["settled_pnl"] or 0.0)
                 db_entries = int(row["entries_today"] or 0)
