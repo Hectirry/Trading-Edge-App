@@ -43,7 +43,10 @@ def main():
     loader = PolybotSQLiteLoader(db_path)
     sizing = cfg.get("sizing", {})
     risk_cfg = cfg.get("risk", {})
-    stake = min(float(sizing.get("stake_usd", 3.0)), float(risk_cfg.get("max_position_size_usd", 5.0)))
+    stake = min(
+        float(sizing.get("stake_usd", 3.0)),
+        float(risk_cfg.get("max_position_size_usd", 5.0)),
+    )
 
     result = run_backtest(
         strategy=strategy,
@@ -80,12 +83,18 @@ def main():
         print("\n-- trades only in polybot (first 10) --")
         for k in sorted(only_ref)[:10]:
             v = ref_trades[k]
-            print(f"  {k[0]} {k[1]}  entry_ts={v['entry_ts']:.2f}  entry_price={v['entry_price']:.6f}  pnl={v['pnl']:+.2f}")
+            print(
+                f"  {k[0]} {k[1]}  entry_ts={v['entry_ts']:.2f}  "
+                f"entry_price={v['entry_price']:.6f}  pnl={v['pnl']:+.2f}"
+            )
     if only_tea:
         print("\n-- trades only in tea (first 10) --")
         for k in sorted(only_tea)[:10]:
             t = tea_trades[k]
-            print(f"  {k[0]} {k[1]}  entry_ts={t.entry_ts:.2f}  entry_price={t.entry_price:.6f}  pnl={t.pnl_usd:+.2f}")
+            print(
+                f"  {k[0]} {k[1]}  entry_ts={t.entry_ts:.2f}  "
+                f"entry_price={t.entry_price:.6f}  pnl={t.pnl_usd:+.2f}"
+            )
 
     # Price/pnl drift on common.
     price_drift = 0

@@ -63,12 +63,18 @@ def main():
         print("\nOnly in polybot (first 20):")
         for k in sorted(only_p)[:20]:
             row = p_by[k]
-            print(f"  {row['slug']} {row['side']} entry_ts={row['entry_ts']} price={row['entry_price']} pnl={row['pnl_usd']}")
+            print(
+                f"  {row['slug']} {row['side']} entry_ts={row['entry_ts']} "
+                f"price={row['entry_price']} pnl={row['pnl_usd']}"
+            )
     if only_t:
         print("\nOnly in tea (first 20):")
         for k in sorted(only_t)[:20]:
             row = t_by[k]
-            print(f"  {row['slug']} {row['side']} entry_ts={row['entry_ts']} price={row['entry_price']} pnl={row['pnl_usd']}")
+            print(
+                f"  {row['slug']} {row['side']} entry_ts={row['entry_ts']} "
+                f"price={row['entry_price']} pnl={row['pnl_usd']}"
+            )
     diff_price = 0
     diff_pnl = 0
     for k in common:

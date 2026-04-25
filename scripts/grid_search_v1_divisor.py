@@ -28,7 +28,6 @@ from trading.cli.train_last90s import (
     _load_resolved_markets,
     build_samples,
 )
-from trading.engine.features.macro import MacroSnapshot, classify_regime
 
 log = logging.getLogger("grid_search.v1_divisor")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -54,13 +53,16 @@ def _clamp(x: float, lo: float, hi: float) -> float:
 
 
 def _regime_from_onehot(onehot: tuple[float, float, float]) -> str:
-    if onehot[0] >= 0.5: return "uptrend"
-    if onehot[1] >= 0.5: return "downtrend"
+    if onehot[0] >= 0.5:
+        return "uptrend"
+    if onehot[1] >= 0.5:
+        return "downtrend"
     return "range"
 
 
-def _evaluate(samples, divisor: float, edge_threshold: float = 0.04,
-              spread_max: float = 150.0) -> dict:
+def _evaluate(
+    samples, divisor: float, edge_threshold: float = 0.04, spread_max: float = 150.0
+) -> dict:
     n_entries = 0
     n_wins = 0
     pnl_usd = 0.0
@@ -69,11 +71,13 @@ def _evaluate(samples, divisor: float, edge_threshold: float = 0.04,
     for s in samples:
         f = s.features
         m90 = f[FEATURE_IDX["m90_bps"]]
-        regime = _regime_from_onehot((
-            f[FEATURE_IDX["regime_uptrend"]],
-            f[FEATURE_IDX["regime_downtrend"]],
-            f[FEATURE_IDX["regime_range"]],
-        ))
+        regime = _regime_from_onehot(
+            (
+                f[FEATURE_IDX["regime_uptrend"]],
+                f[FEATURE_IDX["regime_downtrend"]],
+                f[FEATURE_IDX["regime_range"]],
+            )
+        )
         implied = f[FEATURE_IDX["implied_prob_yes"]]
         spread = f[FEATURE_IDX["pm_spread_bps"]]
 
@@ -84,19 +88,13 @@ def _evaluate(samples, divisor: float, edge_threshold: float = 0.04,
             reasons["spread_too_wide"] = reasons.get("spread_too_wide", 0) + 1
             continue
         if regime == "uptrend" and micro_prob <= 0.5:
-            reasons["macro_contradicts_micro"] = (
-                reasons.get("macro_contradicts_micro", 0) + 1
-            )
+            reasons["macro_contradicts_micro"] = reasons.get("macro_contradicts_micro", 0) + 1
             continue
         if regime == "downtrend" and micro_prob >= 0.5:
-            reasons["macro_contradicts_micro"] = (
-                reasons.get("macro_contradicts_micro", 0) + 1
-            )
+            reasons["macro_contradicts_micro"] = reasons.get("macro_contradicts_micro", 0) + 1
             continue
         if abs(edge) < edge_threshold:
-            reasons["edge_below_threshold"] = (
-                reasons.get("edge_below_threshold", 0) + 1
-            )
+            reasons["edge_below_threshold"] = reasons.get("edge_below_threshold", 0) + 1
             continue
 
         # Side is YES_UP if edge positive else YES_DOWN.
@@ -132,12 +130,12 @@ def main() -> int:
     ap.add_argument("--to", dest="date_to", required=True)
     ap.add_argument("--polybot-agent", default="/btc-tendencia-data/polybot-agent.db")
     ap.add_argument("--polybot-btc5m", default="/polybot-btc5m-data/polybot_agent.db")
-    ap.add_argument("--divisors", type=float, nargs="+",
-                    default=[20.0, 30.0, 40.0, 50.0, 60.0])
+    ap.add_argument("--divisors", type=float, nargs="+", default=[20.0, 30.0, 40.0, 50.0, 60.0])
     args = ap.parse_args()
 
     import shutil
     import tempfile
+
     tmp_dir = Path(tempfile.mkdtemp(prefix="tea_grid_"))
 
     def _snapshot(src: str) -> str:
@@ -163,16 +161,19 @@ def main() -> int:
     )
 
     ma = _load_resolved_markets(Path(btc5m_snap), slug_encodes_open_ts=False, pg_dsn=pg_dsn)
-    for m in ma: m["_source"] = btc5m_snap
+    for m in ma:
+        m["_source"] = btc5m_snap
     mb = _load_resolved_markets(Path(agent_snap), slug_encodes_open_ts=True, pg_dsn=pg_dsn)
-    for m in mb: m["_source"] = agent_snap
+    for m in mb:
+        m["_source"] = agent_snap
     markets = [
-        m for m in (ma + mb)
-        if t_from.timestamp() <= float(m["close_ts"]) <= t_to.timestamp()
+        m for m in (ma + mb) if t_from.timestamp() <= float(m["close_ts"]) <= t_to.timestamp()
     ]
     log.info("resolved markets: %d", len(markets))
     candles = _load_ohlcv_5m(
-        pg_dsn, int(t_from.timestamp()) - 3600, int(t_to.timestamp()) + 3600,
+        pg_dsn,
+        int(t_from.timestamp()) - 3600,
+        int(t_to.timestamp()) + 3600,
     )
     log.info("ohlcv 5m rows: %d", len(candles))
 

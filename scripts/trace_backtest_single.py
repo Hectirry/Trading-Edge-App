@@ -56,7 +56,10 @@ def main():
                 continue
             decision = strategy.should_enter(ctx)
             if 130 <= ctx.t_in_window <= 140:
-                print(f"t={ctx.t_in_window:.1f} strat={decision.action.value} reason={decision.reason}")
+                print(
+                    f"t={ctx.t_in_window:.1f} strat={decision.action.value} "
+                    f"reason={decision.reason}"
+                )
             if decision.action is Action.ENTER:
                 print(f">>> ENTER at ts={ctx.ts} t={ctx.t_in_window:.1f}")
                 entered = True

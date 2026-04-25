@@ -8,10 +8,14 @@ Trading-Edge-App driver can reproduce its output bit-for-bit.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
+
+import asyncpg
 
 from trading.engine.types import TickContext
 
@@ -29,12 +33,39 @@ class MarketOutcome:
 def _build_pg_dsn() -> str:
     return os.environ.get(
         "DATABASE_URL",
-        f"postgresql://{os.environ.get('TEA_PG_USER','tea')}:"
-        f"{os.environ.get('TEA_PG_PASSWORD','')}@"
-        f"{os.environ.get('TEA_PG_HOST','tea-postgres')}:"
-        f"{os.environ.get('TEA_PG_PORT','5432')}/"
-        f"{os.environ.get('TEA_PG_DB','trading_edge')}",
+        f"postgresql://{os.environ.get('TEA_PG_USER', 'tea')}:"
+        f"{os.environ.get('TEA_PG_PASSWORD', '')}@"
+        f"{os.environ.get('TEA_PG_HOST', 'tea-postgres')}:"
+        f"{os.environ.get('TEA_PG_PORT', '5432')}/"
+        f"{os.environ.get('TEA_PG_DB', 'trading_edge')}",
     )
+
+
+def _run_coro(coro):
+    """Execute an async coroutine from a sync context, even when an outer
+    event loop is already running (the CLI wraps main in `asyncio.run`).
+    Mirrors the helper in `trading.paper.backtest_loader`."""
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is None:
+        return asyncio.run(coro)
+    result: dict = {}
+
+    def _worker():
+        new_loop = asyncio.new_event_loop()
+        try:
+            result["value"] = new_loop.run_until_complete(coro)
+        finally:
+            new_loop.close()
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join()
+    if "value" not in result:
+        raise RuntimeError("market_outcomes helper thread did not complete")
+    return result["value"]
 
 
 class PolybotSQLiteLoader:
@@ -156,8 +187,6 @@ class PolybotSQLiteLoader:
         the driver skips them rather than fall back to polybot chainlink
         (which the 2026-04-25 audit found was 47% frozen).
         """
-        import psycopg2
-
         # Discover slugs in range from polybot's ticks table.
         with self._connect() as c:
             rows = c.execute(
@@ -187,22 +216,23 @@ class PolybotSQLiteLoader:
             return {}
 
         # Bulk fetch BTCUSDT 1m close for the whole minute range; index
-        # by unix-second-of-minute. Single round-trip.
-        conn = psycopg2.connect(_build_pg_dsn())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT EXTRACT(EPOCH FROM ts)::bigint, close "
+        # by unix-second-of-minute. Single round-trip via asyncpg.
+        async def _fetch_closes(min_ts: int, max_ts: int) -> dict[int, float]:
+            conn = await asyncpg.connect(dsn=_build_pg_dsn())
+            try:
+                pg_rows = await conn.fetch(
+                    "SELECT EXTRACT(EPOCH FROM ts)::bigint AS t, close "
                     "FROM market_data.crypto_ohlcv "
                     "WHERE exchange='binance' AND symbol='BTCUSDT' AND interval='1m' "
-                    "AND ts BETWEEN to_timestamp(%s) AND to_timestamp(%s)",
-                    (min(minutes), max(minutes)),
+                    "AND ts BETWEEN to_timestamp($1) AND to_timestamp($2)",
+                    min_ts,
+                    max_ts,
                 )
-                close_by_minute = {
-                    int(t): float(c) for (t, c) in cur.fetchall() if c is not None
-                }
-        finally:
-            conn.close()
+            finally:
+                await conn.close()
+            return {int(r["t"]): float(r["close"]) for r in pg_rows if r["close"] is not None}
+
+        close_by_minute = _run_coro(_fetch_closes(min(minutes), max(minutes)))
 
         out: dict[str, float] = {}
         for slug, minute in slug_to_minute.items():

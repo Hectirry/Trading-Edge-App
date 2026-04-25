@@ -96,12 +96,18 @@ def main():
         print("\n-- first 5 only in ref --")
         for k in sorted(only_ref)[:5]:
             v = ref_set[k]
-            print(f"  {k[0]} {k[1]} entry_ts={v['entry_ts']:.1f} price={v['entry_price']:.4f} pnl={v['pnl']:+.2f}")
+            print(
+                f"  {k[0]} {k[1]} entry_ts={v['entry_ts']:.1f} "
+                f"price={v['entry_price']:.4f} pnl={v['pnl']:+.2f}"
+            )
     if only_tea:
         print("\n-- first 5 only in tea --")
         for k in sorted(only_tea)[:5]:
             t = tea_set[k]
-            print(f"  {k[0]} {k[1]} entry_ts={t.entry_ts:.1f} price={t.entry_price:.4f} pnl={t.pnl_usd:+.2f}")
+            print(
+                f"  {k[0]} {k[1]} entry_ts={t.entry_ts:.1f} "
+                f"price={t.entry_price:.4f} pnl={t.pnl_usd:+.2f}"
+            )
 
     price_drift = 0
     pnl_drift = 0

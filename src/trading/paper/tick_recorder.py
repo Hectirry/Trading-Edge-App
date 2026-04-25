@@ -25,6 +25,24 @@ log = get_logger(__name__)
 
 REDIS_CHANNEL = "tea:paper_ticks"
 
+# Lead given to the publishing-window filter so the open-price capture
+# (~5 s window after window_open) latches reliably even with sub-second
+# clock jitter between the master clock and Polymarket's window
+# scheduling. Trailing edge stays strict at window_close_ts.
+WINDOW_OPEN_LEAD_S = 2.0
+
+
+def _is_in_publishing_window(window_close_ts: float, now: float) -> bool:
+    """True iff `now` is in [window_open - WINDOW_OPEN_LEAD_S, window_close).
+
+    Without this gate, ``feeds._refresh_once`` seeds ~100 upcoming
+    markets in ``state.markets`` and the recorder would publish a
+    ``t_in_window=0`` tick for every one of them every ~1 s, bloating
+    Redis and `paper_ticks` with rows that no strategy ever evaluates.
+    """
+    window_open = window_close_ts - 300.0
+    return (window_open - WINDOW_OPEN_LEAD_S) <= now < window_close_ts
+
 
 class TickRecorder:
     def __init__(self, state: FeedState, redis_url: str) -> None:
@@ -49,7 +67,11 @@ class TickRecorder:
             last_spot_ts = self.state.spot_ts
             now = time()
             async with self.state.lock:
-                open_markets = [m for m in self.state.markets.values() if m.window_close_ts > now]
+                open_markets = [
+                    m
+                    for m in self.state.markets.values()
+                    if _is_in_publishing_window(m.window_close_ts, now)
+                ]
                 feed_snapshot = {
                     "spot": self.state.spot_price,
                     "chainlink": self.state.chainlink_price,

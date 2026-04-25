@@ -6,8 +6,31 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
+
+import tomli
 
 from trading.common.db import acquire
+
+# In-process cache of the strategies TOML keyed by path. Stores
+# (mtime, parsed_dict). Invalidates automatically when the file changes
+# on disk so dev hot-reload (edit + curl) still works without a restart;
+# in prod the file is immutable per deploy so the first call warms the
+# cache and the rest are zero-IO. Replaces the prior pattern of
+# re-reading + re-parsing on every request.
+_TOML_CACHE: dict[Path, tuple[float, dict]] = {}
+
+_DEFAULT_STRATEGIES_TOML = Path("config/environments/staging.toml")
+
+
+def _load_strategies_toml(path: Path = _DEFAULT_STRATEGIES_TOML) -> dict:
+    mtime = path.stat().st_mtime
+    cached = _TOML_CACHE.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    cfg = tomli.loads(path.read_text())
+    _TOML_CACHE[path] = (mtime, cfg)
+    return cfg
 
 
 async def list_backtests(
@@ -102,29 +125,40 @@ async def get_job(job_id: str) -> dict | None:
 
 
 async def list_strategies() -> list[dict]:
-    """Read active strategies from staging.toml registry + their paused state."""
-    from pathlib import Path
+    """Read active strategies from staging.toml registry + their paused state.
 
-    import tomli
+    TOML is mtime-cached and the per-strategy `strategy_state` lookups
+    collapse into one ``WHERE strategy_id = ANY(...)`` query. Hot path —
+    invoked from the status, research index, new, and chat endpoints.
+    """
+    cfg = _load_strategies_toml()
+    strategies = cfg.get("strategies", {})
+    if not strategies:
+        return []
+    names = list(strategies.keys())
 
-    cfg = tomli.loads(Path("config/environments/staging.toml").read_text())
-    out: list[dict] = []
     async with acquire() as conn:
-        for name, entry in cfg.get("strategies", {}).items():
-            row = await conn.fetchrow(
-                "SELECT state, updated_at FROM trading.strategy_state WHERE strategy_id = $1",
-                name,
-            )
-            state = json.loads(row["state"]) if row and row["state"] else {}
-            out.append(
-                {
-                    "name": name,
-                    "enabled": bool(entry.get("enabled")),
-                    "paused": bool(state.get("paused", False)),
-                    "updated_at": row["updated_at"] if row else None,
-                    "params_file": entry.get("params_file"),
-                }
-            )
+        rows = await conn.fetch(
+            "SELECT strategy_id, state, updated_at "
+            "FROM trading.strategy_state "
+            "WHERE strategy_id = ANY($1::text[])",
+            names,
+        )
+    state_by_id = {r["strategy_id"]: r for r in rows}
+
+    out: list[dict] = []
+    for name, entry in strategies.items():
+        row = state_by_id.get(name)
+        state = json.loads(row["state"]) if row and row["state"] else {}
+        out.append(
+            {
+                "name": name,
+                "enabled": bool(entry.get("enabled")),
+                "paused": bool(state.get("paused", False)),
+                "updated_at": row["updated_at"] if row else None,
+                "params_file": entry.get("params_file"),
+            }
+        )
     return out
 
 

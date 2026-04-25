@@ -147,7 +147,7 @@ def write_combinations_csv(trades: list[dict], out: Path) -> None:
         rows.append(
             {
                 "combo_signature": sig,
-                "fired_gates": ",".join(g for g, b in zip(GATES, sig) if b == "1"),
+                "fired_gates": ",".join(g for g, b in zip(GATES, sig, strict=False) if b == "1"),
                 "n_trades": n,
                 "win_rate": wins / n if n else 0.0,
                 "avg_pnl": total_pnl / n if n else 0.0,
@@ -237,7 +237,7 @@ async def _main() -> None:
             if not np.isnan(v):
                 pairs.append((abs(v), v, GATES[i], GATES[j]))
     pairs.sort(reverse=True)
-    for absv, v, gi, gj in pairs[:5]:
+    for _absv, v, gi, gj in pairs[:5]:
         print(f"  corr({gi},{gj}) = {v:+.3f}  [{GATE_LABELS[gi]} vs {GATE_LABELS[gj]}]")
     print()
     print(f"wrote: {csv_path}")

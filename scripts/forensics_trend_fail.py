@@ -188,7 +188,6 @@ async def run() -> None:
         n_resolution_match = 0
         n_canonical_disagree = 0
         n_canonical_yes_up_correct = 0
-        n_loader_open_eq_close = 0
         n_chainlink_frozen_at_loader_open = 0
         edge_dist = []
         for t in trades:

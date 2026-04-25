@@ -13,7 +13,7 @@ Grafana exposed via existing Traefik (openclaw) at `https://187-124-130-221.nip.
 ## Quickstart (VPS)
 
 ```
-cp .env.example .env                              # edit or rely on /etc/trading-system/secrets.env
+cp .env.example .env                              # edit, OR symlink to /etc/trading-system/secrets.env on the VPS
 docker compose up -d
 docker compose ps                                 # 7 containers Up
 ```

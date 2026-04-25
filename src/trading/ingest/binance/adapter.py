@@ -11,7 +11,7 @@ import websockets
 from aiolimiter import AsyncLimiter
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from trading.common.db import upsert_many
+from trading.common.db import bulk_upsert_via_copy, upsert_many
 from trading.common.logging import get_logger
 from trading.common.metrics import REGISTRY
 from trading.ingest.base import (
@@ -118,7 +118,10 @@ class BinanceAdapter(CryptoIngestAdapter):
                 )
                 for k in raw
             ]
-            n = await upsert_many(
+            # Backfill pages are up to 1000 rows; use COPY+temp+INSERT
+            # rather than executemany — order-of-magnitude faster and
+            # the temp-table overhead is amortized per page.
+            n = await bulk_upsert_via_copy(
                 "market_data.crypto_ohlcv",
                 ["exchange", "symbol", "interval", "ts", "open", "high", "low", "close", "volume"],
                 rows,

@@ -49,6 +49,7 @@ select = ["E", "F", "I", "W", "B", "UP"]
 testpaths = ["tests"]
 addopts = "-q -m 'not integration'"
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: hits real external APIs; skipped in CI by default",
 ]

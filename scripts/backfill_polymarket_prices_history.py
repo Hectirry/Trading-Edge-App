@@ -29,12 +29,12 @@ import json
 import logging
 import os
 import time
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
-import urllib.request
-import urllib.error
 
 log = logging.getLogger("backfill.polymarket_prices_history")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -44,6 +44,13 @@ API_URL = "https://clob.polymarket.com/prices-history"
 # tightest 1-min granularity it accepts for windows ≤ 1 day.
 DEFAULT_FIDELITY = 1
 SLEEP_BETWEEN_CALLS_S = 0.4
+
+# Min rows below which a token is treated as "partial" and re-fetched.
+# Each market window is [open-5min, close+5min] = 15 min @ fidelity=1, so
+# ~15 samples are expected per token. 10 ≈ 67% coverage; tokens with fewer
+# rows from a previous interrupted run get retried (ON CONFLICT DO NOTHING
+# on (token_id, ts) keeps re-runs idempotent — no duplicates).
+MIN_ROWS_PER_TOKEN = 10
 
 
 def _pg_dsn() -> str:
@@ -68,7 +75,10 @@ def _fetch_history(token_id: str, start_ts: int, end_ts: int) -> list[dict[str, 
         f"{API_URL}?market={token_id}"
         f"&startTs={start_ts}&endTs={end_ts}&fidelity={DEFAULT_FIDELITY}"
     )
-    req = urllib.request.Request(url, headers={"User-Agent": _BROWSER_UA, "Accept": "application/json"})
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": _BROWSER_UA, "Accept": "application/json"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             body = resp.read().decode("utf-8")
@@ -145,14 +155,17 @@ async def _persist(conn, rows: list[tuple]) -> int:
     return len(rows)
 
 
-async def _condition_ids_already_done(conn) -> set[str]:
-    """Return set of condition_ids that already have ≥1 row in
-    polymarket_prices_history. Lets the script skip API calls for
-    already-backfilled markets (cheap idempotency on re-run)."""
+async def _token_row_counts(conn) -> dict[str, int]:
+    """Return token_id → row count in polymarket_prices_history. Used to
+    skip tokens with sufficient coverage (≥ MIN_ROWS_PER_TOKEN). Tokens
+    below that bar — the residue of an interrupted previous run — get
+    re-fetched so partial coverage doesn't become permanent."""
     rows = await conn.fetch(
-        "SELECT DISTINCT condition_id FROM market_data.polymarket_prices_history"
+        "SELECT token_id, COUNT(*) AS n "
+        "FROM market_data.polymarket_prices_history "
+        "GROUP BY token_id"
     )
-    return {r["condition_id"] for r in rows}
+    return {r["token_id"]: int(r["n"]) for r in rows}
 
 
 async def run(t_from: int, t_to: int) -> int:
@@ -163,18 +176,18 @@ async def run(t_from: int, t_to: int) -> int:
         log.info("found %d resolved BTC up/down 5m markets in window", len(markets))
         if not markets:
             return 0
-        # Skip markets we've already persisted, to keep re-runs fast.
-        done = await _condition_ids_already_done(conn)
-        before = len(markets)
-        markets = [m for m in markets if m["condition_id"] not in done]
-        log.info("skipping %d already-persisted markets; %d remain", before - len(markets), len(markets))
+        token_counts = await _token_row_counts(conn)
 
         total_inserted = 0
+        n_tokens_skipped = 0
         for i, m in enumerate(markets):
             # Window: [open - 5min, close + 5min] in unix seconds.
             start_ts = max(0, int(m["open_unix"]) - 300)
             end_ts = int(m["close_unix"]) + 300
             for outcome, token in (("YES", m["yes_token"]), ("NO", m["no_token"])):
+                if token_counts.get(token, 0) >= MIN_ROWS_PER_TOKEN:
+                    n_tokens_skipped += 1
+                    continue
                 history = _fetch_history(token, start_ts, end_ts)
                 rows = [
                     (
@@ -192,13 +205,19 @@ async def run(t_from: int, t_to: int) -> int:
                 time.sleep(SLEEP_BETWEEN_CALLS_S)
             if (i + 1) % 25 == 0:
                 log.info(
-                    "progress %d / %d markets — total rows persisted: %d",
+                    "progress %d / %d markets — rows persisted: %d, tokens skipped: %d",
                     i + 1,
                     len(markets),
                     total_inserted,
+                    n_tokens_skipped,
                 )
 
-        log.info("done: persisted %d rows for %d markets", total_inserted, len(markets))
+        log.info(
+            "done: persisted %d rows for %d markets (%d tokens skipped as already-done)",
+            total_inserted,
+            len(markets),
+            n_tokens_skipped,
+        )
         return total_inserted
     finally:
         await conn.close()
