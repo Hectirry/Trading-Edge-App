@@ -56,6 +56,41 @@ class Sample:
 # ------------------------------------------------------------------ IO
 
 
+def _fetch_polymarket_implied_yes(
+    pg_dsn: str,
+    slug: str,
+    as_of_unix: int,
+) -> float | None:
+    """Latest YES price from `market_data.polymarket_prices_history` for
+    the given market_slug at or before ``as_of_unix``. None when no row
+    exists (slug not backfilled / as_of pre-dates first sample) — caller
+    drops sample (prefer-drop-over-poison, same policy as labels fix).
+    """
+    import psycopg2
+
+    conn = psycopg2.connect(pg_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pp.price::float8
+                FROM market_data.polymarket_prices_history pp
+                JOIN market_data.polymarket_markets pm
+                  ON pm.condition_id = pp.condition_id
+                WHERE pm.slug = %s
+                  AND pp.outcome = 'YES'
+                  AND pp.ts <= to_timestamp(%s)
+                ORDER BY pp.ts DESC
+                LIMIT 1
+                """,
+                (slug, as_of_unix),
+            )
+            row = cur.fetchone()
+            return float(row[0]) if row else None
+    finally:
+        conn.close()
+
+
 def _fetch_microstructure_for_window(
     pg_dsn: str,
     end_ts_unix: int,
@@ -289,6 +324,7 @@ def build_samples(
     candles_5m: list[tuple[float, float, float, float]],
     include_bb_residual: bool = False,
     include_microstructure: bool = False,
+    use_real_implied_prob: bool = False,
     pg_dsn: str | None = None,
     microstructure_window_s: int = 90,
     large_threshold_usd: float = 100_000.0,
@@ -321,6 +357,8 @@ def build_samples(
 
     if include_microstructure and pg_dsn is None:
         raise ValueError("include_microstructure=True requires pg_dsn for crypto_trades fetch")
+    if use_real_implied_prob and pg_dsn is None:
+        raise ValueError("use_real_implied_prob=True requires pg_dsn")
 
     if include_microstructure:
         from trading.engine.features.binance_microstructure import (
@@ -330,6 +368,7 @@ def build_samples(
 
     samples: list[Sample] = []
     n_dropped_micro = 0
+    n_dropped_implied = 0
     for m in markets:
         open_ts = int(m["open_ts"])
         close_ts = int(m["close_ts"])
@@ -341,15 +380,33 @@ def build_samples(
         snap = _macro_at(as_of)
         if snap is None:
             continue
+        # Read real implied_prob_yes from polymarket_prices_history if
+        # available (TAREA 3.9). Fallback to 0.5 keeps legacy behavior.
+        implied_yes = 0.5
+        if use_real_implied_prob:
+            implied_yes_raw = _fetch_polymarket_implied_yes(
+                pg_dsn,  # type: ignore[arg-type]
+                m["slug"],
+                int(as_of),
+            )
+            if implied_yes_raw is None:
+                # Drop sample — `bb_market_vs_prior` and any future feature
+                # using the Polymarket book would carry a synthetic 0.5
+                # otherwise, falsifying training distribution.
+                n_dropped_implied += 1
+                continue
+            implied_yes = max(0.0, min(1.0, implied_yes_raw))
         inp = V2FeatureInputs(
             as_of_ts=as_of,
             spots_last_90s=spots,
             macro_snap=snap,
-            # Polymarket book snapshot unreliable historically → neutral
-            # defaults. Model learns from micro + macro + time features.
-            implied_prob_yes=0.5,
-            yes_ask=0.5,
-            no_ask=0.5,
+            # When use_real_implied_prob=False, neutral defaults below.
+            # The book snapshot fields (yes_ask/no_ask/depth) are still
+            # neutral — backfilling those would require a full L2 history
+            # ingest, out of scope for v3.
+            implied_prob_yes=implied_yes,
+            yes_ask=implied_yes,
+            no_ask=1.0 - implied_yes,
             depth_yes=100.0,
             depth_no=100.0,
             pm_imbalance=0.0,
@@ -403,6 +460,12 @@ def build_samples(
         log.info(
             "build_samples: microstructure dropped %d / kept %d (no crypto_trades in window)",
             n_dropped_micro,
+            len(samples),
+        )
+    if use_real_implied_prob:
+        log.info(
+            "build_samples: implied_prob dropped %d / kept %d (no polymarket_prices_history row)",
+            n_dropped_implied,
             len(samples),
         )
     return samples
@@ -702,6 +765,14 @@ def main() -> int:
         default=100_000.0,
         help="Notional threshold for bm_large_trade_flag (default $100k).",
     )
+    ap.add_argument(
+        "--use-real-implied-prob",
+        action="store_true",
+        help="Read implied_prob_yes from market_data.polymarket_prices_history "
+        "at as_of_ts instead of hardcoding 0.5. Requires the table to be "
+        "backfilled (see scripts/backfill_polymarket_prices_history.py). "
+        "Drops samples whose market has no row for the as_of timestamp.",
+    )
     args = ap.parse_args()
 
     t_from = datetime.fromisoformat(args.date_from).replace(tzinfo=UTC)
@@ -775,6 +846,7 @@ def main() -> int:
         candles_5m=candles,
         include_bb_residual=args.include_bb_residual,
         include_microstructure=(args.strategy == "v3"),
+        use_real_implied_prob=args.use_real_implied_prob,
         pg_dsn=pg_dsn,
         microstructure_window_s=args.microstructure_window_s,
         large_threshold_usd=args.large_trade_threshold_usd,
@@ -810,7 +882,10 @@ def main() -> int:
         )
 
         feat_names_override = list(feature_names_v3())
-        version_tag = f"v3_first_{stamp}"
+        if args.use_real_implied_prob:
+            version_tag = f"v3_priceshist_{stamp}"
+        else:
+            version_tag = f"v3_first_{stamp}"
         model_name = "last_90s_forecaster_v3"
     elif args.include_bb_residual:
         version_tag = f"v2_bbres_{stamp}"
