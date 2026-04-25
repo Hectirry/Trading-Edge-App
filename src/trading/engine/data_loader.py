@@ -8,6 +8,7 @@ Trading-Edge-App driver can reproduce its output bit-for-bit.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -25,6 +26,17 @@ class MarketOutcome:
     went_up: bool
 
 
+def _build_pg_dsn() -> str:
+    return os.environ.get(
+        "DATABASE_URL",
+        f"postgresql://{os.environ.get('TEA_PG_USER','tea')}:"
+        f"{os.environ.get('TEA_PG_PASSWORD','')}@"
+        f"{os.environ.get('TEA_PG_HOST','tea-postgres')}:"
+        f"{os.environ.get('TEA_PG_PORT','5432')}/"
+        f"{os.environ.get('TEA_PG_DB','trading_edge')}",
+    )
+
+
 class PolybotSQLiteLoader:
     """Read-only iterator over polybot-style `ticks` tables.
 
@@ -38,6 +50,12 @@ class PolybotSQLiteLoader:
     (= ``ts - open_ts``) and the close-vs-open offset is 300 s. Callers
     pass ``slug_encodes_open_ts=True`` when reading BTC-Tendencia.
     """
+
+    # Capability marker consumed by `engine.backtest_driver.run_backtest`
+    # to dispatch the canonical settle path. Set in 2026-04-25 deuda
+    # follow-up so polybot_sqlite-sourced backtests stop settling against
+    # polybot's frozen chainlink (audit POLYBOT SESGADO, 40.5 % invertidas).
+    provides_settle_prices: bool = True
 
     def __init__(self, db_path: str, slug_encodes_open_ts: bool = False) -> None:
         self.db_path = db_path
@@ -127,50 +145,68 @@ class PolybotSQLiteLoader:
                     )
                 yield slug, ticks
 
-    def market_outcomes(self, from_ts: float, to_ts: float) -> dict[str, MarketOutcome]:
-        """For each market_slug in range, compute open_price (first tick) and
-        final_price (Chainlink at window_close_ts, nearest-neighbor fallback)."""
-        outcomes: dict[str, MarketOutcome] = {}
+    def market_outcomes(self, from_ts: float, to_ts: float) -> dict[str, float]:
+        """Slug → canonical settle price (Binance ``crypto_ohlcv`` 1m
+        ``close`` at minute(close_ts)). Same source as
+        ``scripts/backfill_paper_settles.py`` and
+        ``PaperTicksLoader.market_outcomes`` — keeps both backtest sources
+        on identical ground truth.
+
+        Markets without an OHLCV row at their close minute are omitted —
+        the driver skips them rather than fall back to polybot chainlink
+        (which the 2026-04-25 audit found was 47% frozen).
+        """
+        import psycopg2
+
+        # Discover slugs in range from polybot's ticks table.
         with self._connect() as c:
             rows = c.execute(
                 """
-                SELECT market_slug,
-                       MIN(ts) AS first_ts,
-                       MAX(ts) AS last_ts
+                SELECT DISTINCT market_slug
                 FROM ticks
                 WHERE ts >= ? AND ts <= ?
-                GROUP BY market_slug
                 """,
                 (from_ts, to_ts),
             ).fetchall()
-            for slug, _first_ts, _last_ts in rows:
-                try:
-                    slug_ts = float(slug.rsplit("-", 1)[-1])
-                except ValueError:
-                    continue
-                close_ts = slug_ts + 300.0 if self.slug_encodes_open_ts else slug_ts
-                open_row = c.execute(
-                    "SELECT open_price FROM ticks WHERE market_slug=? " "ORDER BY ts ASC LIMIT 1",
-                    (slug,),
-                ).fetchone()
-                final_row = c.execute(
-                    "SELECT chainlink_price, spot_price FROM ticks "
-                    "WHERE market_slug=? ORDER BY ts DESC LIMIT 1",
-                    (slug,),
-                ).fetchone()
-                if not open_row or not final_row:
-                    continue
-                open_price = float(open_row[0] or 0.0)
-                final_price = float(final_row[0] or final_row[1] or 0.0)
-                if open_price == 0.0 or final_price == 0.0:
-                    continue
-                went_up = final_price > open_price
-                outcomes[slug] = MarketOutcome(
-                    slug=slug,
-                    window_open_ts=close_ts - 300.0,
-                    window_close_ts=close_ts,
-                    open_price=open_price,
-                    final_price=final_price,
-                    went_up=went_up,
+        if not rows:
+            return {}
+
+        # Map slug → close-minute unix; collect minute set for bulk fetch.
+        slug_to_minute: dict[str, int] = {}
+        minutes: set[int] = set()
+        for (slug,) in rows:
+            try:
+                slug_ts = int(slug.rsplit("-", 1)[-1])
+            except ValueError:
+                continue
+            close_ts = slug_ts + 300 if self.slug_encodes_open_ts else slug_ts
+            close_minute = (int(close_ts) // 60) * 60
+            slug_to_minute[slug] = close_minute
+            minutes.add(close_minute)
+        if not minutes:
+            return {}
+
+        # Bulk fetch BTCUSDT 1m close for the whole minute range; index
+        # by unix-second-of-minute. Single round-trip.
+        conn = psycopg2.connect(_build_pg_dsn())
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT EXTRACT(EPOCH FROM ts)::bigint, close "
+                    "FROM market_data.crypto_ohlcv "
+                    "WHERE exchange='binance' AND symbol='BTCUSDT' AND interval='1m' "
+                    "AND ts BETWEEN to_timestamp(%s) AND to_timestamp(%s)",
+                    (min(minutes), max(minutes)),
                 )
-        return outcomes
+                close_by_minute = {
+                    int(t): float(c) for (t, c) in cur.fetchall() if c is not None
+                }
+        finally:
+            conn.close()
+
+        out: dict[str, float] = {}
+        for slug, minute in slug_to_minute.items():
+            settle = close_by_minute.get(minute)
+            if settle is not None:
+                out[slug] = settle
+        return out
