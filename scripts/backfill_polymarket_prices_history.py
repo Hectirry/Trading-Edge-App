@@ -87,6 +87,11 @@ def _fetch_history(token_id: str, start_ts: int, end_ts: int) -> list[dict[str, 
 
 
 async def _markets_in_range(conn, t_from: int, t_to: int) -> list[dict[str, Any]]:
+    # NOTE: we do NOT filter on `resolved = true` because TEA's polymarket
+    # ingestor sets that flag only on a subset of markets that hit the
+    # /resolutions endpoint, while polybot SQLite tracks resolution
+    # independently via trade outcome. The backfill processes every market
+    # with a non-null clobTokenIds list; the API returns whatever it has.
     rows = await conn.fetch(
         """
         SELECT condition_id, slug, metadata->>'clobTokenIds' AS token_ids_json,
@@ -94,7 +99,7 @@ async def _markets_in_range(conn, t_from: int, t_to: int) -> list[dict[str, Any]
                EXTRACT(EPOCH FROM close_time)::bigint AS close_unix
         FROM market_data.polymarket_markets
         WHERE slug LIKE 'btc-%updown-5m-%'
-          AND resolved = true
+          AND metadata->>'clobTokenIds' IS NOT NULL
           AND close_time >= to_timestamp($1)
           AND close_time <= to_timestamp($2)
         ORDER BY close_time
@@ -140,6 +145,16 @@ async def _persist(conn, rows: list[tuple]) -> int:
     return len(rows)
 
 
+async def _condition_ids_already_done(conn) -> set[str]:
+    """Return set of condition_ids that already have ≥1 row in
+    polymarket_prices_history. Lets the script skip API calls for
+    already-backfilled markets (cheap idempotency on re-run)."""
+    rows = await conn.fetch(
+        "SELECT DISTINCT condition_id FROM market_data.polymarket_prices_history"
+    )
+    return {r["condition_id"] for r in rows}
+
+
 async def run(t_from: int, t_to: int) -> int:
     pg_dsn = _pg_dsn()
     conn = await asyncpg.connect(dsn=pg_dsn)
@@ -148,6 +163,11 @@ async def run(t_from: int, t_to: int) -> int:
         log.info("found %d resolved BTC up/down 5m markets in window", len(markets))
         if not markets:
             return 0
+        # Skip markets we've already persisted, to keep re-runs fast.
+        done = await _condition_ids_already_done(conn)
+        before = len(markets)
+        markets = [m for m in markets if m["condition_id"] not in done]
+        log.info("skipping %d already-persisted markets; %d remain", before - len(markets), len(markets))
 
         total_inserted = 0
         for i, m in enumerate(markets):
