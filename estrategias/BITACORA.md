@@ -19,23 +19,16 @@ Tres deudas operacionales resueltas + ingest nuevo:
 - TAREA 3.8: `scripts/backfill_polymarket_prices_history.py` con UA Chrome (Cloudflare 1010 bypass), idempotente vía PK + `_condition_ids_already_done`. Backfill en curso para los 865 markets BTC up/down 5m en 2026-04-22..2026-04-25.
 - TAREA 3.9: `train_last90s` añade flag `--use-real-implied-prob` que reemplaza el hardcode 0.5 con la price-history real, drop si no hay row.
 - TAREA 3.10 (re-train v3 con `--use-real-implied-prob`):
-  **PENDIENTE**. El backfill de 865 markets toma ~15 min vs el budget
-  efectivo de la sesión; se inició desde el host (no muere con
-  restarts del container) y al cierre llevaba ~370/865 markets
-  procesados, ~3 min × ~33 markets/min restante. Cuando complete,
-  ejecutar:
-  ```
-  docker compose exec -T tea-engine python -m trading.cli.train_last90s \
-    --from 2026-04-22 --to 2026-04-25 \
-    --polybot-agent /btc-tendencia-data/polybot-agent.db \
-    --optuna-trials 50 --time-budget-s 600 --seed 42 \
-    --strategy v3 --use-real-implied-prob
-  ```
-  Comparar `v3_priceshist_<ts>` vs `v3_first_2026-04-25T05-34-52Z`
-  (AUC=0.659, n=149). Esperamos lift ≥0 si el real
-  `implied_prob_yes` aporta señal sobre el hardcode 0.5; lift ≤0
-  significa que la tesis "lead-lag PM/Binance" no resiste con datos
-  de 2-3 días (subset chico).
+  **completado**. Backfill final 2.45 M rows / 865 markets (full
+  coverage). v3_priceshist_2026-04-25T12-16-50Z, n=149 (104/22/23):
+  **AUC=0.7311** vs v3_first 0.6591 → **lift +7.2 pp**.
+  Brier=0.252 vs 0.236 (+1.6 pp leve degradación), ECE=0.173 vs 0.147
+  (+2.6 pp). `implied_prob_yes` aparece **rank #2** del importance
+  (14.2 % gain) en v3_priceshist contra 0 % en v3_first (constante).
+  passes_gate=true. is_active=false (no promoción esta sesión).
+  Top-10 v3_priceshist: m30_bps, implied_prob_yes, bm_cvd_normalized,
+  bm_signed_autocorr_lag1, adx_14, bm_trade_intensity, hour_sin,
+  ema8_vs_ema34_pct, m60_bps, bm_large_trade_flag.
 
 Pre-trabajo: resolver FAIL del VPS (uncommitted local mods bloqueando rebase).
 Hicimos 7 commits temáticos + ff-merge feature → main + push, restaurando OK.

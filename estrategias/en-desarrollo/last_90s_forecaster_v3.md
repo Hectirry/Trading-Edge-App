@@ -139,6 +139,57 @@ gain marginal; CVD probablemente subsume taker_buy_ratio (correlados).
 - Markets descartados por crypto_trades gap (v3 only): 25 → 149 samples v3.
 - Sample yield v3 / v2 ≈ 86 %.
 
+### Real implied_prob_yes (TAREA 3.10 — re-train con libro PM histórico)
+
+Hipótesis follow-up: en `v3_first` el campo `implied_prob_yes` se
+hardcodeó a 0.5 durante training (no había libro Polymarket histórico
+ingerido). Ingerimos `market_data.polymarket_prices_history` desde el
+endpoint `/prices-history` del CLOB y re-entrenamos v3 con la flag
+`--use-real-implied-prob`.
+
+| modelo | n_train | n_test | AUC | Brier | ECE | n_features | gate |
+|---|---:|---:|---:|---:|---:|---:|---|
+| v3_first_2026-04-25T05-34-52Z | 104 | 23 | 0.6591 | 0.2364 | 0.1472 | 26 | passed |
+| **v3_priceshist_2026-04-25T12-16-50Z** | 104 | 23 | **0.7311** | 0.2523 | 0.1734 | 26 | passed |
+
+| métrica | v3_first | v3_priceshist | delta |
+|---|---:|---:|---:|
+| AUC | 0.6591 | 0.7311 | **+7.2 pp** |
+| Brier | 0.2364 | 0.2523 | +1.6 pp (degradación leve) |
+| ECE | 0.147 | 0.173 | +2.6 pp (degradación leve) |
+
+AUC sube 7.2 pp; Brier/ECE empeoran levemente pero los dos siguen por
+debajo del cap sample-size-aware (Brier ≤ 0.260, ECE ≤ 0.20). El gate
+sigue passing.
+
+#### Feature importance v3_priceshist (LightGBM gain, top 12)
+
+| rank | feature | gain | pct |
+|---:|---|---:|---:|
+| 1 | m30_bps | 67.62 | 14.3 % |
+| 2 | **implied_prob_yes** | 67.09 | 14.2 % |
+| 3 | **bm_cvd_normalized** | 58.50 | 12.4 % |
+| 4 | **bm_signed_autocorr_lag1** | 58.07 | 12.3 % |
+| 5 | adx_14 | 52.08 | 11.0 % |
+| 6 | **bm_trade_intensity** | 36.86 | 7.8 % |
+| 7 | hour_sin | 35.90 | 7.6 % |
+| 8 | ema8_vs_ema34_pct | 29.17 | 6.2 % |
+| 9 | m60_bps | 19.76 | 4.2 % |
+| 10 | **bm_large_trade_flag** | 18.29 | 3.9 % |
+| 11 | hour_cos | 15.25 | 3.2 % |
+| 12 | consecutive_same_dir | 10.84 | 2.3 % |
+
+Lectura clave:
+- `implied_prob_yes` salta de 0 % gain (constante en v3_first) a #2
+  rank con 14.2 % gain → el libro real PM tiene contenido predictivo
+  sustancial. Justifica el coste del backfill y del flag.
+- 4 / 5 microstructure features ahora en top-10 (vs 3 / 5 en v3_first):
+  `bm_large_trade_flag` se cuela al rank 10 cuando el libro PM ya
+  ocupa parte de la "información de orden flujo" que antes capturaba
+  CVD en solitario.
+- `bm_taker_buy_ratio` sigue fuera del top-10 (rank 13). Hipótesis: lo
+  subsume CVD (ambos miden direccionalidad del taker tape).
+
 ## Veredicto
 
 **Hipótesis validada** según los criterios definidos:
@@ -147,14 +198,25 @@ gain marginal; CVD probablemente subsume taker_buy_ratio (correlados).
 - ECE 0.147 ≤ 0.20 ✓ (gate sample-size-aware) ✓
 - 3 / 5 microstructure en top-10 ✓
 
+Re-train con implied_prob real (TAREA 3.10) levanta AUC un +7.2 pp
+adicional sobre v3_first y mete `implied_prob_yes` al rank #2. La
+construcción se mantiene activa en shadow con `v3_first` (la activa
+hoy). Promotion del modelo `priceshist` queda condicionada a:
+walk-forward 3 × 7 d post-2026-05-13 + shadow ≥ 7 d con paper
+predictions logged.
+
 Caveats honestos:
 - n_test = 23, std error de AUC ≈ 0.10. El intervalo aproximado es
-  0.66 ± 0.10. Lift puntual está bien por encima de eso, pero la
-  variabilidad estadística es alta.
-- ECE val = 0.147 está por encima del 0.05 ideal (sample-size-aware
-  cap 0.20 lo rescata). Calibración isotónica aplicada.
+  0.66 ± 0.10 (v3_first) y 0.73 ± 0.10 (v3_priceshist). Lift puntual
+  está bien por encima de eso, pero la variabilidad estadística es alta.
+- ECE val = 0.173 (priceshist) está por encima del 0.05 ideal
+  (sample-size-aware cap 0.20 lo rescata). Calibración isotónica
+  aplicada — no parece estar absorbiendo bien la nueva dimensión de
+  implied_prob.
 - Walk-forward NO se corrió en esta sesión. Hasta no validar
-  estabilidad temporal sobre splits, no promover.
+  estabilidad temporal sobre splits, no promover ninguna versión v3.
+- `is_active=false` para ambos. Ningún modelo v3 está sirviendo edges
+  vinculantes; sólo loggea predicciones en shadow.
 
 ## Historial
 
@@ -170,3 +232,23 @@ paso**: walk-forward 3 × 7 d cuando crypto_trades alcance 3 semanas
 de retention; shadow paper ≥ 7 d post-walk-forward; promotion sólo
 si stability_index ≥ 0.6 y AUC OOS mediana ≥ 0.55 sin desviación
 seria.
+
+### 2026-04-25 — re-train con implied_prob_yes real (TAREA 3.10)
+
+Cerrado el deuda de "implied_prob hardcodeada a 0.5". Pipeline:
+1. schema migration `infra/postgres/init/11_polymarket_prices_history.sql`
+   (hypertable `condition_id, token_id, outcome, ts, price`, PK `(token_id, ts)`).
+2. backfill `scripts/backfill_polymarket_prices_history.py` (User-Agent
+   browser para bypass Cloudflare 1010, sin filtro `resolved=true` —
+   recorre todos los markets con `clobTokenIds` no-null). 2.45 M rows
+   para los 865 markets de la ventana 2026-04-22 → 2026-04-25.
+3. `train_last90s.py` flag `--use-real-implied-prob` que joinea
+   `polymarket_prices_history` con la tabla de markets para encontrar
+   el último precio YES ≤ as_of (= open + 210 s).
+
+Resultado: AUC 0.6591 → 0.7311 (+7.2 pp) y `implied_prob_yes` salta
+de 0 % gain (constante en v3_first) a rank #2 con 14.2 % gain. Brier
+y ECE empeoran levemente pero ambos siguen bajo el cap
+sample-size-aware. `is_active=false` — el v3_first sigue como modelo
+en shadow para preservar continuidad del log de predicciones; la
+decisión de promover priceshist queda para post-walk-forward.

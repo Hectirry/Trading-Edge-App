@@ -12,7 +12,7 @@ _(ninguna todavía — las que pasen criterios se listan aquí)_
 | nombre | family | último verdict | último resultado | resumen |
 |---|---|---|---|---|
 | cvd_confirm_t2_v0 | polymarket_btc5m | — | — | CVD 1m como 7º gate de confirmación sobre trend_confirm_t1_v1. |
-| last_90s_forecaster_v3 | polymarket_btc5m | validado | 2026-04-25 (lift +10.5 pp AUC) | v2 + 5 microstructure tail (CVD, signed autocorr, intensity, taker, large). 3/5 en top-10 importance. Subset honesto por retention 90 d crypto_trades. |
+| last_90s_forecaster_v3 | polymarket_btc5m | validado | 2026-04-25 (priceshist +7.2 pp AUC sobre first; +17.7 pp vs v2) | v2 + 5 microstructure + libro PM real. v3_priceshist AUC 0.7311 con implied_prob_yes #2 importance. Promotion pendiente walk-forward 3×7d post-2026-05-13. |
 
 ## Descartadas
 
