@@ -42,6 +42,13 @@ params_file = "config/strategies/pbt5m_last_90s_forecaster_v2.toml"
 enabled = true
 params_file = "config/strategies/pbt5m_last_90s_forecaster_v3.toml"
 
+[strategies.bb_residual_ofi_v1]
+# BB-residual + OFI shrinkage; per-tick scan across [60, 290] s.
+# Boots shadow (no active model row); strategy logs feature trail
+# until ensemble is trained. Promotion gated by tea-promotion-gate.
+enabled = true
+params_file = "config/strategies/pbt5m_bb_residual_ofi_v1.toml"
+
 [strategies.contest_ensemble_v1]
 # ADR 0012 — Moondev contest A/B arm A. Boots with the explicit-rules
 # ensemble; upgrades to the LightGBM meta when a model row is promoted.

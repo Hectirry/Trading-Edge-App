@@ -1,0 +1,121 @@
+# bb_residual_ofi_v1 — Brownian-bridge baseline + OFI residual,
+# Sharpe-gated entry across [60, 290] s of every 5 m window.
+#
+# Boots SHADOW. There is no active row in research.models for this
+# name; load_runner_async returns None and the strategy emits
+# SKIP("shadow_mode_no_model") while still logging the full feature
+# vector + edge_net + sharpe to paper_predictions for offline eval.
+
+name = "bb_residual_ofi_v1"
+description = "BB no-drift prior shrinkage-blended with OFI/microstructure ensemble; Sharpe-gated, convex fee model from spec."
+
+[params]
+# Per-tick scan window. Wider than v3 (which only fires at 205-215 s)
+# because the spec evaluates every second. One ENTER per market_slug
+# is enforced by the strategy's _per_window_entered set.
+entry_window_start_s = 60
+entry_window_end_s = 290
+
+# Convex fee from the worked example: fee(p) = fee_k · 4·p·(1-p).
+# 0.0315 = peaks at 3.15 % at p=0.5; matches the spec exactly. Do NOT
+# confuse with [fill_model].fee_k — that one drives the simulator.
+fee_k = 0.0315
+
+# Brownian-bridge horizon (window length).
+bb_T_seconds = 300.0
+
+# Microstructure aggregation window for the OFI proxy. The spec uses
+# the trailing 30 s for the directional pressure measurement.
+microstructure_window_seconds = 30
+large_trade_threshold_usd = 100000.0
+
+# OFI composite weights. Coinbase trades are not ingested yet —
+# coinbase_weight MUST stay 0.0 until market_data.crypto_trades
+# carries Coinbase rows. Strategy raises a SKIP if it sees > 0.
+ofi_coinbase_weight = 0.0
+
+# Per-trade Sharpe gate. Strict 2.0 for the bulk of the window;
+# relaxed to 1.5 in the final 30 s ("now-or-never" branch in the
+# spec). Backtests should run with both fixed at 2.0 first, then
+# enable the late-window relaxation as a separate experiment.
+sharpe_threshold = 2.0
+sharpe_threshold_late = 1.5
+sharpe_late_t_to_close_s = 30.0
+
+# Minimum edge-net to trade (in addition to the Sharpe gate). Defaults
+# to 0 because Sharpe already encodes magnitude; can be raised to
+# floor out marginal trades during shadow if the prediction trail
+# shows too many low-edge ENTERs.
+edge_net_min = 0.0
+
+# σ of p_edge for the per-trade Sharpe denominator. SENTINEL — fixed
+# at the spec's 0.025 until a bootstrap ensemble emits per-prediction
+# stddev. When the ensemble lands, replace this with a runtime call
+# and document the migration in the doc's Historial section.
+p_edge_sigma = 0.025
+
+# Shrinkage α: p_final = α·p_edge + (1-α)·p_bm. Linear ramp with
+# t_in_window plus |OFI| and large_trade bonuses, clamped.
+alpha_min = 0.4
+alpha_max = 0.85
+alpha_ofi_gain = 1.0
+alpha_large_trade_bonus = 0.1
+
+# Polymarket book filter — wider than v3 because we're evaluating
+# across more of the window, and price impact is symmetric in the
+# convex fee model so a wider book doesn't bias direction.
+spread_max_bps = 300.0
+
+# Promotion gates (sample-size-aware in train CLI when implemented).
+promotion_auc_min = 0.55
+promotion_brier_max = 0.245
+promotion_ece_max = 0.05
+
+[sizing]
+# Fractional Kelly per the spec. Stake floor in USD; Kelly fraction
+# 0.25 (quarter-Kelly) until trade count justifies more.
+stake_usd = 5.0
+kelly_fraction = 0.25
+kelly_min_trades = 50
+kelly_max_stake_usd = 21.0
+
+[backtest]
+# Backtest entry-window mirrors [params].entry_window_*. The driver
+# only invokes should_enter() between these t_in_window values.
+earliest_entry_t_s = 60
+latest_entry_t_s = 290
+window_seconds = 300
+decision_interval_s = 1
+
+[fill_model]
+slippage_bps = 20.0
+fill_probability = 1.0
+apply_fee_in_backtest = true
+# Simulator fee_k. Match [params].fee_k so backtest PnL uses the same
+# convex fee the strategy is gating against — silent mismatch here is
+# the classic "looks great in backtest, dies on the fee" failure.
+fee_k = 0.0315
+
+[risk]
+bypass_in_backtest = true
+cooldown_seconds = 30
+max_position_size_usd = 21.0
+daily_loss_limit_usd = 50.0
+daily_trade_limit = 999999
+# RiskManager-required floors. Strategy already gates via Sharpe +
+# edge_net before reaching the risk layer; these are belt-and-braces.
+min_edge_bps = 0
+min_z_score = 0.0
+min_pm_depth_usd = 15.0
+skip_if_spread_bps = 500
+loss_pause_threshold_usd = 5.0
+loss_pause_window_minutes = 30
+loss_pause_duration_minutes = 30
+
+[paper]
+capital_usd = 1000.0
+daily_loss_alert_pct = 0.03
+daily_loss_pause_pct = 0.05
+# Always shadow at creation. Promotion to is_active=true requires
+# the .claude/skills/tea-promotion-gate checklist + walk-forward.
+shadow = true
