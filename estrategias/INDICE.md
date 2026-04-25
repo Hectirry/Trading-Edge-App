@@ -24,13 +24,12 @@ _(ninguna todavía — las que pasen criterios se listan aquí)_
 
 ---
 
-**Prioridad de la sesión actual:** walk-forward 3 × 7 d de
-`last_90s_forecaster_v3` antes de promotion. Bloqueador: retention
-90 d de `market_data.crypto_trades` permite hoy sólo 1 × 7 d (no
-representativo). Esperar a ≥ 2026-05-13 para el 3 × 7 d completo, o
-extender retention via ADR (decisión de Hector). En el mientras
-tanto: shadow paper de v3 ya activo; revisar feature importance
-estabilidad y desviación de calibración cada 24 h. Segunda prioridad
-pendiente: extender `PolybotSQLiteLoader` con
-`provides_settle_prices=True` + `market_outcomes()` leyendo
-`crypto_ohlcv` 1 m (deuda registrada en BITACORA 25-abr).
+**Prioridad de la sesión actual:** esperar 2026-05-13 walk-forward
+v3. Hasta entonces v3 corre shadow en paper (post-restart 25-abr ya
+activo, vector 26 features). En la sesión post-2026-05-13: re-train
+con `--use-real-implied-prob` sobre dataset extendido + walk-forward
+CLI 3 × 7 d + decisión de promotion. Deuda completada en sprint del
+25-abr: `PolybotSQLiteLoader` settle canónico, bootstrap `_daily_pnl`,
+audit-flag de backtests `polybot_sqlite` source, ingest
+`market_data.polymarket_prices_history` + train hook
+`--use-real-implied-prob`.

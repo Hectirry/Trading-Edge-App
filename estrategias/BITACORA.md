@@ -8,6 +8,21 @@ Formato: `## YYYY-MM-DD — tema corto` + 1-5 líneas.
 
 ---
 
+## 2026-04-25 — TAREA 1+2+3 stabilization sprint
+
+Tres deudas operacionales resueltas + ingest nuevo:
+- TAREA 1: tea-engine restart, v3 entró en RAM (`v3.no_active_model_row` log al boot, `paper.driver.bootstrap_daily_pnl` por strategy con sumas reales del trailing 24 h).
+- TAREA 2.4: `paper/driver.py` bootstrap de `_daily_pnl` desde `trading.fills` 24 h + filtro `strategy_id` en `_reconciliation_loop` SQL. Suprime los falsos positivos post-restart documentados como deuda el 25-abr.
+- TAREA 2.5: `PolybotSQLiteLoader` ahora setea `provides_settle_prices=True` y `market_outcomes()` lee `crypto_ohlcv` 1 m al `close_time`. Backtests `--source polybot_sqlite` settlean canonical (igual que paper_ticks post fase 1).
+- TAREA 2.6: 11 filas históricas en `research.backtests` con `data_source='polybot_sqlite'` taggeadas con `metrics.audit_flag = "POLYBOT_SETTLE_CHAINLINK_PRE_FIX_2026-04-25, ..."`.
+- TAREA 3.7: nueva tabla `market_data.polymarket_prices_history` (hypertable) — schema en `infra/postgres/init/11_polymarket_prices_history.sql`.
+- TAREA 3.8: `scripts/backfill_polymarket_prices_history.py` con UA Chrome (Cloudflare 1010 bypass), idempotente vía PK + `_condition_ids_already_done`. Backfill en curso para los 865 markets BTC up/down 5m en 2026-04-22..2026-04-25.
+- TAREA 3.9: `train_last90s` añade flag `--use-real-implied-prob` que reemplaza el hardcode 0.5 con la price-history real, drop si no hay row.
+- TAREA 3.10 (re-train v3): se ejecutará tras backfill completo.
+
+Pre-trabajo: resolver FAIL del VPS (uncommitted local mods bloqueando rebase).
+Hicimos 7 commits temáticos + ff-merge feature → main + push, restaurando OK.
+
 ## 2026-04-24 — inicialización
 
 Flujo de iteración de estrategias formalizado en `estrategias/`. Código
