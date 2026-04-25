@@ -316,6 +316,18 @@ class TrendConfirmT1V1(StrategyBase):
             "prior_trend_n_points": prior_n_points,
             "prior_trend_window_s": self.prior_trend_window_s,
             "prior_trend_ok": bool(f7_prior_trend),
+            # Gate-firing booleans for downstream analysis (Paso 0
+            # instrumentation). Reaching this point means cl_adverse and
+            # cl_concordance gates already passed.
+            "f1_fracdiff_fired": bool(f1_fracdiff),
+            "f2_autocorr_fired": bool(f2_autocorr),
+            "f3_cusum_fired": bool(f3_cusum),
+            "f4_microprice_fired": bool(f4_microprice),
+            "f5_mc_fired": bool(f5_mc),
+            "f6_candle_fired": bool(f6_candle),
+            "f7_prior_trend_fired": bool(f7_prior_trend),
+            "cl_adverse_blocked": False,
+            "tau_seconds": int(ctx.t_to_close),
             **{k: round(v, 6) for k, v in feats.items()},
         }
         total_filters = 6 if self.mc_shadow else 7

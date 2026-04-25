@@ -45,6 +45,8 @@ class BacktestTrade:
     edge_at_entry: float
     pm_spread_bps_at_entry: float
     vol_regime_at_entry: str
+    signal_features: dict = field(default_factory=dict)
+    signal_breakdown: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -241,6 +243,8 @@ def run_backtest(
                 "edge": ctx.edge,
                 "spread_bps": ctx.pm_spread_bps,
                 "vol_regime": _vol_regime_from(ctx),
+                "signal_features": dict(decision.signal_features or {}),
+                "signal_breakdown": dict(decision.signal_breakdown or {}),
             }
 
         if position is not None:
@@ -273,6 +277,8 @@ def run_backtest(
                     edge_at_entry=position["edge"],
                     pm_spread_bps_at_entry=position["spread_bps"],
                     vol_regime_at_entry=position["vol_regime"],
+                    signal_features=position["signal_features"],
+                    signal_breakdown=position["signal_breakdown"],
                 )
             )
             trade_idx += 1
