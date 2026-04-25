@@ -141,3 +141,13 @@ for v2, the strategy flips `shadow=true` without a restart.
   calibration drift), retire.
 - If dataset grows past 10 k markets, consider a second v2 variant
   with attention over OFI levels — separate ADR.
+
+## 2026-04-25 — Erratum
+
+Las métricas AUC=0.66 / Brier=0.25 mencionadas arriba se midieron
+contra labels contaminadas (ver `_audit_polybot_groundtruth.md` —
+40.5 % de las labels que entrenaron `v2_2026-04-23T20-06-38Z` estaban
+invertidas vs Binance OHLCV 1 m por chainlink congelado en polybot).
+Re-medición contra labels honestas (Binance OHLCV 1m): AUC=0.430.
+Modelo `v2_2026-04-23T20-06-38Z` despromovido el 2026-04-25
+(`is_active=false`).
