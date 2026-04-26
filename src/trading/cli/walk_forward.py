@@ -193,6 +193,9 @@ async def _eval_last_90s_v2_fold(fold: FoldWindow, *, include_bb_residual: bool 
     polybot_agent = "/btc-tendencia-data/polybot-agent.db"
     if not _Path(polybot_agent).exists():
         return _unvalidated_fold(fold, note="polybot-agent sqlite missing")
+    from trading.engine.data_loader import warn_if_polybot_stale
+
+    warn_if_polybot_stale(polybot_agent, expected_window_end_ts=fold.oos_to.timestamp())
 
     # Labels re-derived from Binance OHLCV 1m (audit 2026-04-25). pg_dsn
     # required by the new signature; markets without OHLCV at either end
@@ -293,6 +296,9 @@ async def _eval_last_90s_v3_fold(fold: FoldWindow) -> dict:
     polybot_agent = "/btc-tendencia-data/polybot-agent.db"
     if not _Path(polybot_agent).exists():
         return _unvalidated_fold(fold, note="polybot-agent sqlite missing")
+    from trading.engine.data_loader import warn_if_polybot_stale
+
+    warn_if_polybot_stale(polybot_agent, expected_window_end_ts=fold.oos_to.timestamp())
 
     pg_dsn = _pg_dsn()
     markets = _load_resolved_markets(

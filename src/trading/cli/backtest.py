@@ -21,7 +21,7 @@ from trading.common.config import get_settings
 from trading.common.db import acquire
 from trading.common.logging import configure_logging, get_logger
 from trading.engine.backtest_driver import EntryWindowConfig, FillConfig, run_backtest
-from trading.engine.data_loader import PolybotSQLiteLoader
+from trading.engine.data_loader import PolybotSQLiteLoader, warn_if_polybot_stale
 from trading.engine.node import create_trading_node
 from trading.engine.risk import RiskManager
 from trading.paper.backtest_loader import PaperTicksLoader
@@ -135,6 +135,9 @@ async def _run(args: argparse.Namespace) -> None:
     create_trading_node(mode="backtest", strategy_name=args.strategy)
 
     if args.source == "polybot_sqlite":
+        warn_if_polybot_stale(
+            args.polybot_db, expected_window_end_ts=args.to_ts.timestamp()
+        )
         loader = PolybotSQLiteLoader(
             db_path=args.polybot_db,
             slug_encodes_open_ts=args.slug_encodes_open_ts,

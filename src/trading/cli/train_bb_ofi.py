@@ -692,6 +692,12 @@ def main() -> int:
         args.model_name,
     )
 
+    from trading.engine.data_loader import warn_if_polybot_stale
+
+    for src in (args.polybot_btc5m, args.polybot_agent):
+        if Path(src).exists():
+            warn_if_polybot_stale(src, expected_window_end_ts=t_to.timestamp())
+
     # Snapshot SQLite to a writable tmpfs so concurrent writes by the
     # ingestor on the host don't trigger transient "database disk image
     # is malformed" — same trick as train_last90s.

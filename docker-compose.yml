@@ -103,10 +103,14 @@ services:
       # backtest ignores it, see ADR 0005).
       - /etc/trading-system:/etc/trading-system:ro
       # Read-only mount of the polybot-btc5m SQLite for parity tests.
+      # NOTE: upstream bots stopped writing on 2026-04-26 ~03:12 UTC; the
+      # files remain readable but never grow. Consumers warn via
+      # `warn_if_polybot_stale` (src/trading/engine/data_loader.py).
       - /home/coder/polybot-btc5m/data:/polybot-btc5m-data:ro
       # Read-only mount of polybot report JSONs for parity probe.
       - /home/coder/polybot-btc5m/reports:/polybot-btc5m-reports:ro
       # Read-only mount of BTC-Tendencia-5m data for trend_confirm_t1_v1 parity.
+      # Same freeze caveat as polybot-btc5m above (2026-04-26 ~03:12 UTC).
       - /home/coder/BTC-Tendencia-5m/data:/btc-tendencia-data:ro
       # Make scripts/ available in the engine for parity probe.
       - ./scripts:/app/scripts:ro

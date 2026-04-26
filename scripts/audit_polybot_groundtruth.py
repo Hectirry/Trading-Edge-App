@@ -202,6 +202,9 @@ def main() -> int:
     if not Path(SQLITE_PATH).exists():
         print(f"FATAL: {SQLITE_PATH} not found")
         return 2
+    from trading.engine.data_loader import warn_if_polybot_stale
+
+    warn_if_polybot_stale(SQLITE_PATH)
     con = _connect_ro(SQLITE_PATH)
     print(f"# polybot-agent audit\n# source: {SQLITE_PATH}\n")
 

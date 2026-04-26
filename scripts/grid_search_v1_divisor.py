@@ -133,6 +133,15 @@ def main() -> int:
     ap.add_argument("--divisors", type=float, nargs="+", default=[20.0, 30.0, 40.0, 50.0, 60.0])
     args = ap.parse_args()
 
+    t_from = datetime.fromisoformat(args.date_from).replace(tzinfo=UTC)
+    t_to = datetime.fromisoformat(args.date_to).replace(tzinfo=UTC)
+
+    from trading.engine.data_loader import warn_if_polybot_stale
+
+    for src in (args.polybot_agent, args.polybot_btc5m):
+        if Path(src).exists():
+            warn_if_polybot_stale(src, expected_window_end_ts=t_to.timestamp())
+
     import shutil
     import tempfile
 
@@ -148,9 +157,6 @@ def main() -> int:
 
     agent_snap = _snapshot(args.polybot_agent)
     btc5m_snap = _snapshot(args.polybot_btc5m)
-
-    t_from = datetime.fromisoformat(args.date_from).replace(tzinfo=UTC)
-    t_to = datetime.fromisoformat(args.date_to).replace(tzinfo=UTC)
 
     pg_dsn = (
         f"postgresql://{os.environ.get('TEA_PG_USER','tea')}:"

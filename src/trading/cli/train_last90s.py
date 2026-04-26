@@ -778,6 +778,12 @@ def main() -> int:
     t_from = datetime.fromisoformat(args.date_from).replace(tzinfo=UTC)
     t_to = datetime.fromisoformat(args.date_to).replace(tzinfo=UTC)
 
+    from trading.engine.data_loader import warn_if_polybot_stale
+
+    for src in (args.polybot_btc5m, args.polybot_agent):
+        if Path(src).exists():
+            warn_if_polybot_stale(src, expected_window_end_ts=t_to.timestamp())
+
     # Copy the live sqlite files to /tmp so concurrent writers on the
     # host don't trigger transient "database disk image is malformed".
     import shutil

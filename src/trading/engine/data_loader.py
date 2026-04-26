@@ -9,15 +9,25 @@ Trading-Edge-App driver can reproduce its output bit-for-bit.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sqlite3
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 import asyncpg
 
 from trading.engine.types import TickContext
+
+logger = logging.getLogger(__name__)
+
+# BTC-Tendencia-5m and polybot-btc5m bot ingest stopped on 2026-04-26 ~03:12 UTC.
+# The SQLite DBs at /btc-tendencia-data/ and /polybot-btc5m-data/ remain
+# readable but never grow — consumers that read them silently return stale
+# data unless they call `warn_if_polybot_stale` first.
+POLYBOT_FREEZE_UTC = "2026-04-26T03:12:00Z"
 
 
 @dataclass(frozen=True)
@@ -68,6 +78,63 @@ def _run_coro(coro):
     return result["value"]
 
 
+def warn_if_polybot_stale(
+    db_path: str | os.PathLike,
+    *,
+    expected_window_end_ts: float | None = None,
+    stale_after_hours: float = 24.0,
+) -> float | None:
+    """Log a WARNING if the polybot SQLite at ``db_path`` looks frozen.
+
+    The upstream BTC-Tendencia-5m / polybot-btc5m ingest bots stopped on
+    2026-04-26 ~03:12 UTC. Their SQLite DBs remain readable on the RO mounts
+    but never grow, so any consumer asking for a window past that point
+    silently gets partial data. This helper queries ``MAX(ts) FROM ticks``
+    and emits a single advisory line when the DB looks stale.
+
+    Returns the last ``ts`` seen, or None if the DB is missing / empty /
+    unreadable. Never raises — purely advisory.
+    """
+    try:
+        # immutable=1 is required post-freeze: the upstream bot left a WAL
+        # file but the mount is RO, so plain mode=ro can't open the DB.
+        with sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True) as c:
+            row = c.execute("SELECT MAX(ts) FROM ticks").fetchone()
+    except sqlite3.Error as exc:
+        logger.warning(
+            "polybot freshness check could not read %s: %s "
+            "(BTC-Tendencia-5m bots froze on %s)",
+            db_path, exc, POLYBOT_FREEZE_UTC,
+        )
+        return None
+    last_ts = row[0] if row else None
+    if last_ts is None:
+        logger.warning(
+            "polybot DB %s has no ticks rows (frozen since %s?)",
+            db_path, POLYBOT_FREEZE_UTC,
+        )
+        return None
+    last_ts = float(last_ts)
+    age_h = (time.time() - last_ts) / 3600.0
+    if age_h > stale_after_hours:
+        logger.warning(
+            "polybot DB %s is stale: last tick at unix=%d (%.1f h ago). "
+            "Upstream BTC-Tendencia-5m / polybot-btc5m bots were shut down "
+            "on %s — analyses past that point use incomplete data.",
+            db_path, int(last_ts), age_h, POLYBOT_FREEZE_UTC,
+        )
+    if expected_window_end_ts is not None and expected_window_end_ts > last_ts + 60:
+        logger.warning(
+            "polybot DB %s does not cover requested window: requested up to "
+            "unix=%d, last tick at unix=%d (gap %.1f h). DB frozen by upstream "
+            "shutdown on %s.",
+            db_path, int(expected_window_end_ts), int(last_ts),
+            (expected_window_end_ts - last_ts) / 3600.0,
+            POLYBOT_FREEZE_UTC,
+        )
+    return last_ts
+
+
 class PolybotSQLiteLoader:
     """Read-only iterator over polybot-style `ticks` tables.
 
@@ -93,7 +160,13 @@ class PolybotSQLiteLoader:
         self.slug_encodes_open_ts = slug_encodes_open_ts
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+        # immutable=1 is required post-2026-04-26 freeze (see
+        # POLYBOT_FREEZE_UTC): the upstream bot left a WAL file behind on a
+        # RO mount, so plain mode=ro fails with "unable to open database
+        # file". The DB is now genuinely immutable so this is correct.
+        return sqlite3.connect(
+            f"file:{self.db_path}?mode=ro&immutable=1", uri=True
+        )
 
     def iter_markets(self, from_ts: float, to_ts: float) -> Iterator[tuple[str, list]]:
         """Yield (market_slug, ticks_list) in ascending FIRST-tick-ts order.
