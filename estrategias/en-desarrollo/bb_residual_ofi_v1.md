@@ -119,6 +119,58 @@ Cualquiera de estos mata la hipótesis:
 
 ## Resultados
 
+### 2026-04-26 — segundo training, escala 16×
+
+Tras el primer training (n=164) detectamos que el bottleneck no era
+``polymarket_prices_history`` sino la cobertura de ticks 1 Hz del
+polybot SQLite (8 d). Solución: reconstruir spots desde
+``market_data.crypto_trades`` (35 d, 10.6 M trades) — al ser un tape
+trade-by-trade resampleado a 1 Hz por forward-fill, la escala σ por
+sqrt(s) que ``realized_vol_per_sqrt_s`` espera se preserva. Markets
+source pasó de polybot SQLite (547 mercados resueltos) a
+``polymarket_markets`` Postgres (8774 mercados), labels seguidas
+canónicas vía Binance OHLCV 1 m close (mismo path del audit
+2026-04-25).
+
+| modelo | n_train | n_val | n_test | AUC | Brier | ECE | gate |
+|---|---:|---:|---:|---:|---:|---:|---|
+| v1 (n=164) | 114 | 24 | 26 | 0.6488 | 0.2650 | 0.0550 | failed Brier |
+| **v2 (n=2642)** | 1849 | 396 | 397 | **0.5966** | 0.2464 | 0.2152 | failed ECE+Brier |
+
+Lectura honesta: el v1 estaba sobreajustado (n_test=26 daba AUC
+artificialmente alto, ±0.10 stderr). El v2 con n_test=397 da AUC
+0.60 ±0.025 — señal real pero **modesta**. ECE 0.215 dice que las
+probabilidades absolutas no son confiables — la calibración isotónica
+detectó miscalibration con más datos que en el v1 ni se veía. Brier
+mejoró porque el modelo dejó de predecir clases extremas.
+
+Optimizaciones del trainer aplicadas (de 5 h estimadas a 5 min):
+- Batched ``_batch_fetch_implied_yes`` con DISTINCT ON + unnest,
+  reemplaza 8 k SELECT por 1.
+- ``_load_baseline_trades_per_day`` cachea el baseline de
+  ``trade_intensity`` por día (1 query) en vez de un COUNT 24 h por
+  mercado.
+- ``_fetch_trades_in_window`` reducido a sólo el window range (sin
+  el COUNT 24 h embebido del v3).
+- Progress logs cada 500 mercados.
+
+`is_active=true` en v2 vía SQL manual; el ``--promote`` honesto
+falló el gate (ECE alto). Documentado.
+
+#### Comportamiento en paper mode (v2)
+
+```
+Polymarket dice:    SÍ 50.5%   NO 49.5%
+BB prior:           SÍ 50.0%   (open=0 transient)
+Modelo (p_edge):    SÍ 89.4%        ← predicciones probabilísticas reales
+Combinado final:    SÍ 69.0%   (α=0.48)
+Predicción:         ↑ SUBIRÁ
+Edge neto: +15.3 pp · Sharpe 6.13 / 2.0 requerido ✅
+SKIP reason: shadow_mode (bloqueado por [paper].shadow=true)
+```
+
+vs v1 anterior donde p_edge era 0.0000 o 1.0000 exacto.
+
 ### 2026-04-26 — primer training honesto
 
 Primer ciclo completo: training pipeline funciona end-to-end y el

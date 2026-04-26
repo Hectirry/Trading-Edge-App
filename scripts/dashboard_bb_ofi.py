@@ -390,10 +390,19 @@ def _render_card(ev: dict[str, Any]) -> list[str]:
         )
 
     # ---- Probabilities side-by-side ---- #
+    # Reconstruct best bid/ask from mid + spread_bps (the strategy emits
+    # both). Surfacing them makes it obvious when the binary book is
+    # parked at the $0.01 tick boundary — otherwise the mid looks
+    # "stuck at 50%" while the real signal is "no fresh trades hit the
+    # book in N seconds".
+    half_spread = p_market * (spread / 10000.0) / 2.0
+    bid_yes = max(0.0, p_market - half_spread)
+    ask_yes = min(1.0, p_market + half_spread)
     market_line = (
         f"  {_c(CYAN, 'Polymarket dice:')}    "
         f"SÍ {_c(BOLD, _pct(p_market))}      "
         f"NO {_c(BOLD, _pct(1 - p_market))}"
+        f"   {_c(DIM, f'(libro: {bid_yes * 100:.1f}¢ bid / {ask_yes * 100:.1f}¢ ask)')}"
     )
     bm_line = (
         f"  {_c(BLUE, 'Brownian Bridge:')}    "

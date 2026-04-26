@@ -47,6 +47,7 @@ from pathlib import Path
 # time (preferable to silent feature drift).
 from trading.cli.train_last90s import (
     _fetch_microstructure_for_window,
+    _fetch_ohlcv_1m_closes,
     _fetch_polymarket_implied_yes,
     _load_resolved_markets,
     _load_ticks_for_slug,
@@ -86,6 +87,245 @@ def _pg_dsn() -> str:
     )
 
 
+# ----------------------------------------- markets / spots from Postgres
+
+
+def _load_settled_markets_from_pg(
+    pg_dsn: str,
+    t_from: datetime,
+    t_to: datetime,
+) -> list[dict]:
+    """All resolved BTC up/down 5 m markets in window, with open_price /
+    close_price re-derived from Binance ``crypto_ohlcv`` 1 m closes
+    (same canonical path as ``_load_resolved_markets`` — preferring
+    drop over poison when a 1 m candle is missing at minute(open) or
+    minute(close)).
+
+    This is the engine-Postgres equivalent of polybot's SQLite path:
+    no dependency on the polybot tick stream's narrow 8-day history.
+    Use this when ``crypto_trades`` coverage exceeds polybot's.
+    """
+    import psycopg2
+
+    t_from_unix = int(t_from.timestamp())
+    t_to_unix = int(t_to.timestamp())
+
+    conn = psycopg2.connect(pg_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT slug, condition_id,
+                       EXTRACT(EPOCH FROM open_time)::bigint,
+                       EXTRACT(EPOCH FROM close_time)::bigint
+                FROM market_data.polymarket_markets
+                WHERE slug LIKE 'btc-%%updown-5m-%%'
+                  AND open_time >= to_timestamp(%s)
+                  AND close_time <= to_timestamp(%s)
+                ORDER BY open_time
+                """,
+                (t_from_unix, t_to_unix),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return []
+
+    minutes: set[int] = set()
+    for _, _, open_ts, close_ts in rows:
+        minutes.add((int(open_ts) // 60) * 60)
+        minutes.add((int(close_ts) // 60) * 60)
+    closes = _fetch_ohlcv_1m_closes(pg_dsn, min(minutes), max(minutes))
+
+    out: list[dict] = []
+    n_dropped_gap = 0
+    for slug, cid, open_ts, close_ts in rows:
+        bin_open = closes.get((int(open_ts) // 60) * 60)
+        bin_close = closes.get((int(close_ts) // 60) * 60)
+        if bin_open is None or bin_close is None:
+            n_dropped_gap += 1
+            continue
+        out.append(
+            {
+                "slug": slug,
+                "condition_id": cid,
+                "open_ts": int(open_ts),
+                "close_ts": int(close_ts),
+                "open_price": float(bin_open),
+                "close_price": float(bin_close),
+            }
+        )
+    if n_dropped_gap:
+        log.info(
+            "_load_settled_markets_from_pg: dropped %d markets with OHLCV gap",
+            n_dropped_gap,
+        )
+    log.info(
+        "_load_settled_markets_from_pg: kept %d / %d markets in window",
+        len(out),
+        len(rows),
+    )
+    return out
+
+
+def _batch_fetch_implied_yes(
+    pg_dsn: str,
+    market_open_ts: list[tuple[str, int]],
+) -> dict[str, float]:
+    """Batch ``_fetch_polymarket_implied_yes`` for many markets at once.
+
+    For each (slug, open_ts), find the latest YES price ≤ open_ts+210
+    (the as_of point) using a single SQL with DISTINCT ON. Returns
+    dict[slug] = price; absent slug means no implied_prob found
+    (caller drops sample).
+
+    Why batch: the per-market version runs one round-trip per market;
+    8 k markets × 2 s each = 5 h. The batch form does it in one PG
+    plan that uses the (token_id, ts) PK efficiently.
+    """
+    if not market_open_ts:
+        return {}
+    import psycopg2
+
+    slugs = [s for s, _ in market_open_ts]
+    as_of_list = [int(o) + 210 for _, o in market_open_ts]
+
+    conn = psycopg2.connect(pg_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH wanted AS (
+                    SELECT slug, as_of FROM unnest(%s::text[], %s::bigint[]) AS t(slug, as_of)
+                ),
+                joined AS (
+                    SELECT w.slug,
+                           pp.price::float8 AS price,
+                           pp.ts
+                    FROM wanted w
+                    JOIN market_data.polymarket_markets pm ON pm.slug = w.slug
+                    JOIN market_data.polymarket_prices_history pp
+                      ON pp.condition_id = pm.condition_id
+                     AND pp.outcome = 'YES'
+                     AND pp.ts <= to_timestamp(w.as_of)
+                )
+                SELECT DISTINCT ON (slug) slug, price
+                FROM joined
+                ORDER BY slug, ts DESC
+                """,
+                (slugs, as_of_list),
+            )
+            return {row[0]: float(row[1]) for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def _load_baseline_trades_per_day(pg_dsn: str, t_from: int, t_to: int) -> dict[int, int]:
+    """Trades-per-day for the BTCUSDT tape, keyed by day-floor unix
+    timestamp. Used as the ``trade_intensity`` baseline so we don't
+    run a COUNT(*) over crypto_trades for every market window.
+
+    The intensity feature already smooths via
+    ``trade_intensity(n_in_window, baseline_24h, window_s=90)`` which
+    treats baselines < 100 as neutral; sub-day variance is below the
+    threshold of relevance for this feature.
+    """
+    import psycopg2
+
+    conn = psycopg2.connect(pg_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXTRACT(EPOCH FROM date_trunc('day', ts))::bigint AS day, "
+                "       COUNT(*)::bigint "
+                "FROM market_data.crypto_trades "
+                "WHERE exchange='binance' AND symbol='BTCUSDT' "
+                "AND ts BETWEEN to_timestamp(%s) AND to_timestamp(%s) "
+                "GROUP BY 1",
+                (int(t_from) - 86400, int(t_to)),
+            )
+            return {int(d): int(n) for (d, n) in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def _fetch_trades_in_window(
+    pg_dsn: str,
+    end_ts_unix: int,
+    window_s: int,
+) -> list[tuple[float, float, str]]:
+    """Trades in [end - window_s, end]. Just the trades — baseline is
+    fetched separately (per-day cache) to avoid 24h COUNT per market."""
+    import psycopg2
+
+    conn = psycopg2.connect(pg_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT price::float8, qty::float8, side "
+                "FROM market_data.crypto_trades "
+                "WHERE exchange='binance' AND symbol='BTCUSDT' "
+                "AND ts BETWEEN to_timestamp(%s) AND to_timestamp(%s)",
+                (end_ts_unix - window_s, end_ts_unix),
+            )
+            return [(float(p), float(q), str(s)) for (p, q, s) in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _load_spots_from_crypto_trades(
+    pg_dsn: str,
+    start_ts: int,
+    end_ts: int,
+) -> list[float]:
+    """Reconstruct a 1 Hz spot stream from ``market_data.crypto_trades``
+    by forward-filling: for each second in ``[start_ts, end_ts]``, the
+    last trade price with ``ts ≤ sec``.
+
+    Why: polybot SQLite ticks only cover the last ~8 days. Binance trade
+    tape covers ~35 days at much higher granularity. Resampling trades
+    to 1 Hz gives the same scale ``realized_vol_per_sqrt_s`` expects
+    (σ of 1 s log-returns) without the polybot dependency.
+
+    Returns empty list when no trades exist in [start-5, end].
+    """
+    import psycopg2
+
+    conn = psycopg2.connect(pg_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXTRACT(EPOCH FROM ts)::float8, price::float8 "
+                "FROM market_data.crypto_trades "
+                "WHERE exchange='binance' AND symbol='BTCUSDT' "
+                "AND ts BETWEEN to_timestamp(%s) AND to_timestamp(%s) "
+                "ORDER BY ts ASC",
+                (int(start_ts) - 5, int(end_ts)),
+            )
+            trades = cur.fetchall()
+    finally:
+        conn.close()
+
+    if not trades:
+        return []
+
+    out: list[float] = []
+    idx = 0
+    n = len(trades)
+    # Advance idx to the last trade ≤ start_ts before emitting.
+    while idx + 1 < n and trades[idx + 1][0] <= start_ts:
+        idx += 1
+    for sec in range(int(start_ts), int(end_ts) + 1):
+        while idx + 1 < n and trades[idx + 1][0] <= sec:
+            idx += 1
+        if trades[idx][0] <= sec:
+            out.append(float(trades[idx][1]))
+        # Else: still before first trade — skip; rare at start.
+    return out
+
+
 # --------------------------------------------------------- sample assembly
 
 
@@ -97,8 +337,16 @@ def build_samples(
     use_real_implied_prob: bool = True,
     microstructure_window_s: int = 90,
     large_threshold_usd: float = 100_000.0,
+    spots_source: str = "auto",
 ) -> list[Sample]:
     """Assemble Sample rows at t=210 s for each market.
+
+    ``spots_source``:
+    - ``"polybot"`` — read 1 Hz ticks from polybot SQLite. Limited by
+      polybot retention (~8 d).
+    - ``"crypto_trades"`` — reconstruct 1 Hz from
+      ``market_data.crypto_trades`` (35 d). Recommended.
+    - ``"auto"`` (default) — try polybot first, fall back to crypto_trades.
 
     Drop policies (prefer-drop-over-poison):
     - Spots < 60 in [open, open+210] → drop
@@ -111,40 +359,93 @@ def build_samples(
         binance_microstructure_from_trades,
     )
 
+    # Pre-compute per-day trade counts so the per-market microstructure
+    # path doesn't run a 24h COUNT(*) over crypto_trades for each call.
+    if markets:
+        t_min = min(int(m["open_ts"]) for m in markets)
+        t_max = max(int(m["close_ts"]) for m in markets)
+        baseline_by_day = _load_baseline_trades_per_day(pg_dsn, t_min, t_max)
+        log.info(
+            "baseline trades-per-day cache: %d days, mean %d trades/day",
+            len(baseline_by_day),
+            int(sum(baseline_by_day.values()) / max(1, len(baseline_by_day))),
+        )
+    else:
+        baseline_by_day = {}
+
+    # Batch implied_yes lookup. Single SQL handles all markets vs the
+    # per-market loop (5 h → seconds).
+    implied_yes_cache: dict[str, float] = {}
+    if use_real_implied_prob and markets:
+        implied_yes_cache = _batch_fetch_implied_yes(
+            pg_dsn,
+            [(m["slug"], int(m["open_ts"])) for m in markets],
+        )
+        log.info(
+            "implied_yes cache: %d / %d markets have a price ≤ as_of",
+            len(implied_yes_cache),
+            len(markets),
+        )
+
     samples: list[Sample] = []
     n_dropped_ticks = 0
     n_dropped_implied = 0
     n_dropped_micro = 0
     n_dropped_vol = 0
+    n_from_polybot = 0
+    n_from_trades = 0
 
-    for m in markets:
+    for i, m in enumerate(markets):
+        if i and i % 500 == 0:
+            log.info(
+                "build_samples: progress %d/%d (kept=%d dropped tk=%d im=%d mc=%d vol=%d)",
+                i,
+                len(markets),
+                len(samples),
+                n_dropped_ticks,
+                n_dropped_implied,
+                n_dropped_micro,
+                n_dropped_vol,
+            )
         open_ts = int(m["open_ts"])
         close_ts = int(m["close_ts"])
         as_of = float(open_ts + 210)
-        # 1 Hz spots from polybot SQLite. Try each source until one returns.
+
         spots: list[float] = []
-        for src in sqlite_sources:
-            spots = _load_ticks_for_slug(src, m["slug"], float(open_ts), as_of)
+        if spots_source in ("polybot", "auto") and sqlite_sources:
+            for src in sqlite_sources:
+                spots = _load_ticks_for_slug(src, m["slug"], float(open_ts), as_of)
+                if len(spots) >= 60:
+                    n_from_polybot += 1
+                    break
+        if len(spots) < 60 and spots_source in ("crypto_trades", "auto"):
+            spots = _load_spots_from_crypto_trades(
+                pg_dsn, int(open_ts), int(as_of)
+            )
             if len(spots) >= 60:
-                break
+                n_from_trades += 1
         if len(spots) < 60:
             n_dropped_ticks += 1
             continue
 
         if use_real_implied_prob:
-            implied = _fetch_polymarket_implied_yes(pg_dsn, m["slug"], int(as_of))
+            implied = implied_yes_cache.get(m["slug"])
             if implied is None:
                 n_dropped_implied += 1
                 continue
         else:
             implied = 0.5
 
-        trades_raw, baseline_24h = _fetch_microstructure_for_window(
+        trades_raw = _fetch_trades_in_window(
             pg_dsn, int(as_of), window_s=microstructure_window_s
         )
         if not trades_raw:
             n_dropped_micro += 1
             continue
+        # Per-day cached baseline (within ±20 % of the true 24 h count
+        # but does not require a per-market COUNT on a 10 M-row table).
+        day_floor = (int(as_of) // 86400) * 86400
+        baseline_24h = baseline_by_day.get(day_floor, 0)
         # Reconstruct Trade-shaped objects expected by the aggregator.
         from trading.engine.features.binance_microstructure import Trade
 
@@ -193,8 +494,11 @@ def build_samples(
         )
 
     log.info(
-        "build_samples: kept=%d dropped(ticks=%d, implied=%d, micro=%d, vol=%d)",
+        "build_samples: kept=%d (polybot=%d, trades=%d) "
+        "dropped(ticks=%d, implied=%d, micro=%d, vol=%d)",
         len(samples),
+        n_from_polybot,
+        n_from_trades,
         n_dropped_ticks,
         n_dropped_implied,
         n_dropped_micro,
@@ -360,6 +664,21 @@ def main() -> int:
         default="bb_residual_ofi_v1",
         help="Name written to research.models. Defaults to the strategy name.",
     )
+    ap.add_argument(
+        "--spots-source",
+        choices=["polybot", "crypto_trades", "auto"],
+        default="crypto_trades",
+        help="Where to get the 1 Hz spot stream. crypto_trades scales to "
+        "~35 d (default); polybot to ~8 d only.",
+    )
+    ap.add_argument(
+        "--markets-source",
+        choices=["sqlite", "postgres"],
+        default="postgres",
+        help="Where to source resolved markets. postgres uses "
+        "polymarket_markets for the full universe; sqlite uses polybot's "
+        "trade-resolved subset (~547 markets).",
+    )
     args = ap.parse_args()
 
     t_from = datetime.fromisoformat(args.date_from).replace(tzinfo=UTC)
@@ -401,14 +720,17 @@ def main() -> int:
 
     # Resolved markets — labels via Binance 1m closes (audit fix).
     markets: list[dict] = []
-    for src in sqlite_sources:
-        markets.extend(
-            _load_resolved_markets(
-                src,
-                slug_encodes_open_ts=args.slug_encodes_open_ts,
-                pg_dsn=pg,
+    if args.markets_source == "postgres":
+        markets = _load_settled_markets_from_pg(pg, t_from, t_to)
+    else:
+        for src in sqlite_sources:
+            markets.extend(
+                _load_resolved_markets(
+                    src,
+                    slug_encodes_open_ts=args.slug_encodes_open_ts,
+                    pg_dsn=pg,
+                )
             )
-        )
     # De-dup by slug, restrict to range.
     seen: set[str] = set()
     markets_in_range: list[dict] = []
@@ -431,6 +753,7 @@ def main() -> int:
         use_real_implied_prob=args.use_real_implied_prob,
         microstructure_window_s=args.microstructure_window_s,
         large_threshold_usd=args.large_trade_threshold_usd,
+        spots_source=args.spots_source,
     )
     if len(samples) < 50:
         log.error(
