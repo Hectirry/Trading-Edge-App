@@ -57,11 +57,11 @@ class MyStrategy(StrategyBase):
         ...
 ```
 
-If the strategy uses an LGBM model, **reuse `LGBRunner` from v2** rather
-than instantiate your own. v3 imports it directly:
+If the strategy uses an LGBM model, **reuse `LGBRunner` from the shared
+helper** rather than instantiate your own. v3 imports it directly:
 
 ```python
-from trading.strategies.polymarket_btc5m.last_90s_forecaster_v2 import LGBRunner
+from trading.strategies.polymarket_btc5m._lgb_runner import LGBRunner
 ```
 
 ## TOML skeleton

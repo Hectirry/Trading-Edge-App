@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Edit(/.claude/skills/tea-promotion-gate/**)",
-      "Edit(/.claude/skills/tea-backfill-pattern/**)"
+      "Edit(/.claude/skills/tea-backfill-pattern/**)",
+      "Bash(echo '')",
+      "Bash(echo '# npm global binaries')",
+      "Bash(echo 'export PATH=\"$HOME/.npm-global/bin:$PATH\"')",
+      "Read(//home/coder/**)"
     ]
   }
 }

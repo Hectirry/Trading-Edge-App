@@ -139,6 +139,19 @@ Claude lee (después del status); debe caber en una pantalla.
 - **activas → descartadas**: requiere decisión del usuario. Mover el
   `.md` y agregar entrada final de Historial con el motivo.
 
+#### Protocolos operacionales (paso a paso)
+
+Para **crear** una estrategia (los 4 archivos + 2 dispatches):
+ver `.claude/skills/tea-strategy-template/SKILL.md`.
+
+Para **eliminar** una estrategia (las 9+ ubicaciones que hay que tocar
+para no dejar referencias colgando, el orden deactivate→delete y el
+audit final): ver `.claude/skills/tea-strategy-removal/SKILL.md`.
+
+Ambos skills son la fuente operacional de verdad. Esta sección 6 es
+la regla de alto nivel; los skills son el checklist concreto. Si los
+dos divergen, el skill gana (es el que usa Claude al ejecutar).
+
 ### 7. BITACORA
 
 `BITACORA.md` es el único archivo append-only. Sirve para notas de
