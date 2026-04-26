@@ -78,6 +78,84 @@ class MicrostructureProviderLike(Protocol):
     def fetch(self, ts: float) -> dict[str, float]: ...
 
 
+class EnsembleLGBRunner:
+    """Bagging-ensemble runner. Loads N member boosters from
+    ``<path>/member_00/model.lgb`` … ``member_{N-1:02d}/model.lgb`` and
+    one shared isotonic calibrator at ``<path>/calibrator.pkl``.
+
+    ``predict_proba(x)`` returns the calibrated mean of member
+    predictions — compatible with the single-model
+    :class:`ModelRunner` protocol so existing callers don't need to know
+    they're talking to an ensemble.
+
+    ``predict_proba_with_uncertainty(x)`` additionally returns the
+    *uncalibrated* per-prediction stddev across members. The stddev is
+    on the raw probability scale and is what the strategy plugs into
+    the Sharpe denominator in place of the TOML sentinel.
+    """
+
+    def __init__(self, ensemble_path: Path) -> None:
+        import lightgbm as lgb
+
+        members_dirs = sorted(p for p in ensemble_path.iterdir() if p.is_dir() and p.name.startswith("member_"))
+        if not members_dirs:
+            raise FileNotFoundError(f"no member_* subdirs under {ensemble_path}")
+        self.boosters = []
+        for d in members_dirs:
+            mp = d / "model.lgb"
+            if not mp.exists():
+                raise FileNotFoundError(f"missing {mp}")
+            self.boosters.append(lgb.Booster(model_file=str(mp)))
+        self.n_features = int(self.boosters[0].num_feature())
+        for b in self.boosters[1:]:
+            if int(b.num_feature()) != self.n_features:
+                raise ValueError("ensemble members disagree on n_features")
+        self._calibrator = None
+        cal = ensemble_path / "calibrator.pkl"
+        if cal.exists():
+            import pickle
+
+            with open(cal, "rb") as f:
+                self._calibrator = pickle.load(f)
+
+    def _member_probs(self, x: list[float]):
+        import numpy as np
+
+        if len(x) != self.n_features:
+            raise ValueError(
+                f"feature vector length {len(x)} does not match "
+                f"ensemble num_feature() {self.n_features}"
+            )
+        arr = np.asarray([x], dtype=np.float64)
+        return np.asarray([float(b.predict(arr)[0]) for b in self.boosters])
+
+    def predict_proba(self, x: list[float]) -> float:
+        probs = self._member_probs(x)
+        p = float(probs.mean())
+        if self._calibrator is not None:
+            p = float(self._calibrator.predict([p])[0])
+        return max(0.0, min(1.0, p))
+
+    def predict_proba_with_uncertainty(self, x: list[float]) -> tuple[float, float]:
+        """Return (calibrated mean, raw cross-member stddev). Stddev uses
+        ddof=1; with N=1 (degenerate) it returns 0.0. The stddev is on
+        the *raw* member-prob scale (not post-calibration) because that
+        is what the Sharpe denominator wants — the dispersion of the
+        underlying predictive distribution, not the dispersion of the
+        deterministic calibration mapping applied to the mean.
+        """
+        import numpy as np
+
+        probs = self._member_probs(x)
+        mean_raw = float(probs.mean())
+        std_raw = float(probs.std(ddof=1)) if len(probs) > 1 else 0.0
+        if self._calibrator is not None:
+            mean_cal = float(self._calibrator.predict([mean_raw])[0])
+        else:
+            mean_cal = mean_raw
+        return max(0.0, min(1.0, mean_cal)), std_raw
+
+
 # Re-exported for tests + tooling that want the canonical helpers
 # without going through the shared feature module by name.
 _convex_fee = convex_fee
@@ -282,8 +360,25 @@ class BBResidualOFIV1(StrategyBase):
                 ),
             )
 
+        # If the runner is an ensemble it exposes a per-prediction
+        # stddev — use that as the Sharpe denominator instead of the
+        # TOML sentinel. A degenerate near-zero stddev (rare but
+        # possible when all members agree) gets floored to the sentinel
+        # so a single high-edge prediction can't pass with infinite
+        # Sharpe by accident.
+        p_edge_sigma_eff = p_edge_sigma
+        p_edge_sigma_source = "sentinel"
         try:
-            p_edge = float(self.model.predict_proba(vec))
+            if hasattr(self.model, "predict_proba_with_uncertainty"):
+                p_edge, p_edge_sigma_raw = self.model.predict_proba_with_uncertainty(vec)
+                p_edge = float(p_edge)
+                if p_edge_sigma_raw > p_edge_sigma:
+                    p_edge_sigma_eff = float(p_edge_sigma_raw)
+                    p_edge_sigma_source = "ensemble"
+                else:
+                    p_edge_sigma_source = "ensemble_floored"
+            else:
+                p_edge = float(self.model.predict_proba(vec))
         except Exception as e:
             log.warning("bb_ofi.model_predict_err", err=str(e))
             return self._emit(
@@ -309,7 +404,7 @@ class BBResidualOFIV1(StrategyBase):
             side = Side.YES_DOWN
             edge_net = edge_no
 
-        sharpe = edge_net / p_edge_sigma if p_edge_sigma > 0 else 0.0
+        sharpe = edge_net / p_edge_sigma_eff if p_edge_sigma_eff > 0 else 0.0
         # Adaptive Sharpe gate: relax to sharpe_th_late when the window
         # is about to close. The strict θ is what backtests are trained
         # for; the relaxed θ is the "now-or-never" branch the spec calls
@@ -325,6 +420,8 @@ class BBResidualOFIV1(StrategyBase):
                 "sharpe": sharpe,
                 "sharpe_threshold_eff": sharpe_th_eff,
                 "side_picked": side.value,
+                "p_edge_sigma_eff": p_edge_sigma_eff,
+                "p_edge_sigma_source": p_edge_sigma_source,
             }
         )
 
@@ -401,6 +498,24 @@ async def load_runner_async(
         log.info("bb_ofi.no_active_model_row", name=name)
         return None
     path = Path(row["path"])
+    # Detect ensemble layout: presence of any member_*/ subdir means
+    # this is an EnsembleLGBRunner artefact. Otherwise fall back to the
+    # single-booster LGBRunner. Mixed layouts (both model.lgb at root
+    # AND member_* dirs) are treated as ensemble — the ensemble metric
+    # row is the canonical one, the loose model.lgb is artefact debris.
+    member_dirs = sorted(p for p in path.iterdir() if p.is_dir() and p.name.startswith("member_"))
+    if member_dirs:
+        try:
+            runner = EnsembleLGBRunner(path)
+            log.info(
+                "bb_ofi.ensemble_loaded",
+                path=str(path),
+                n_members=len(runner.boosters),
+            )
+            return runner
+        except Exception as e:
+            log.error("bb_ofi.ensemble_load_err", err=str(e), path=str(path))
+            return None
     model_file = path / "model.lgb"
     calibrator_file = path / "calibrator.pkl"
     if not model_file.exists():

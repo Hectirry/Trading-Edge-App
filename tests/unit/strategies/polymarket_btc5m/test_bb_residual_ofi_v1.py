@@ -294,3 +294,49 @@ def test_window_rollover_clears_entered_set() -> None:
     s._per_window_entered.add("btc-updown-5m-1")
     s.notify_window_rollover("btc-updown-5m-2")
     assert "btc-updown-5m-1" not in s._per_window_entered
+
+
+# ---------------- ensemble stddev wiring ---------------- #
+
+
+class _StubEnsembleModel:
+    """Model that exposes predict_proba_with_uncertainty so the strategy
+    must use the runtime stddev instead of the TOML sentinel."""
+
+    def __init__(self, mean: float, stddev: float) -> None:
+        self.mean = mean
+        self.stddev = stddev
+
+    def predict_proba(self, x: list[float]) -> float:
+        return self.mean
+
+    def predict_proba_with_uncertainty(self, x: list[float]) -> tuple[float, float]:
+        return self.mean, self.stddev
+
+
+def test_ensemble_stddev_replaces_sentinel_when_larger() -> None:
+    """Ensemble stddev 0.10 ≫ TOML sentinel 0.005 → effective σ should
+    be the ensemble's, and Sharpe should reflect that. Same edge_net as
+    test_enter_yes_up but a much larger denominator → Sharpe drops."""
+    model = _StubEnsembleModel(mean=0.85, stddev=0.10)
+    d = _strat(model=model, ms=_StubMS()).should_enter(_ctx(implied=0.65))
+    assert d.signal_features["p_edge_sigma_source"] == "ensemble"
+    assert d.signal_features["p_edge_sigma_eff"] == pytest.approx(0.10)
+    sharpe_with_ensemble = d.signal_features["sharpe"]
+    # Same setup but with the single-model stub: sentinel σ=0.005 binds.
+    d2 = _strat(model=_StubModel(p=0.85), ms=_StubMS()).should_enter(_ctx(implied=0.65))
+    assert d2.signal_features.get("p_edge_sigma_source", "sentinel") == "sentinel"
+    # 20× smaller denominator → 20× higher Sharpe. The point of the
+    # ensemble wiring is precisely that the inflated single-model Sharpe
+    # gets deflated to a credible number.
+    assert d2.signal_features["sharpe"] > 10 * sharpe_with_ensemble
+
+
+def test_ensemble_stddev_floored_to_sentinel_when_too_small() -> None:
+    """Members near-perfect agreement (stddev 0.001) is suspicious
+    overconfidence — fall back to the sentinel floor (0.005) so a
+    single member-quirk can't pass with infinite Sharpe."""
+    model = _StubEnsembleModel(mean=0.85, stddev=0.001)
+    d = _strat(model=model, ms=_StubMS()).should_enter(_ctx(implied=0.65))
+    assert d.signal_features["p_edge_sigma_source"] == "ensemble_floored"
+    assert d.signal_features["p_edge_sigma_eff"] == pytest.approx(0.005)
