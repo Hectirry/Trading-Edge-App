@@ -42,11 +42,11 @@ sharpe_threshold = 2.0
 sharpe_threshold_late = 1.5
 sharpe_late_t_to_close_s = 30.0
 
-# Minimum edge-net to trade (in addition to the Sharpe gate). Defaults
-# to 0 because Sharpe already encodes magnitude; can be raised to
-# floor out marginal trades during shadow if the prediction trail
-# shows too many low-edge ENTERs.
-edge_net_min = 0.0
+# Minimum edge-net to trade (in addition to the Sharpe gate).
+# 2026-04-26: paper-mode CONSERVATIVE — set to 0.05 (5 pp floor) so
+# only high-conviction edges enter. Once bootstrap ensemble lands and
+# Sharpe denom is real, can drop back to 0.
+edge_net_min = 0.05
 
 # σ of p_edge for the per-trade Sharpe denominator. SENTINEL — fixed
 # at the spec's 0.025 until a bootstrap ensemble emits per-prediction
@@ -74,10 +74,13 @@ promotion_ece_max = 0.05
 [sizing]
 # Fractional Kelly per the spec. Stake floor in USD; Kelly fraction
 # 0.25 (quarter-Kelly) until trade count justifies more.
-stake_usd = 5.0
+# 2026-04-26: paper-mode CONSERVATIVE — stake_usd 1.0, kelly_max 2.0
+# while we observe v2 behaviour and the Sharpe sentinel still inflates
+# decisions. Bumps to 5/21 once bootstrap σ replaces the sentinel.
+stake_usd = 1.0
 kelly_fraction = 0.25
 kelly_min_trades = 50
-kelly_max_stake_usd = 21.0
+kelly_max_stake_usd = 2.0
 
 [backtest]
 # Backtest entry-window mirrors [params].entry_window_*. The driver
@@ -99,8 +102,11 @@ fee_k = 0.0315
 [risk]
 bypass_in_backtest = true
 cooldown_seconds = 30
-max_position_size_usd = 21.0
-daily_loss_limit_usd = 50.0
+# 2026-04-26: paper-mode CONSERVATIVE caps. Cut by 10x while we
+# observe v2 behaviour; ECE 0.215 means abs probabilities are off so
+# Kelly sizing can over-bet — the cap is the safety net.
+max_position_size_usd = 2.0
+daily_loss_limit_usd = 10.0
 daily_trade_limit = 999999
 # RiskManager-required floors. Strategy already gates via Sharpe +
 # edge_net before reaching the risk layer; these are belt-and-braces.
@@ -116,6 +122,11 @@ loss_pause_duration_minutes = 30
 capital_usd = 1000.0
 daily_loss_alert_pct = 0.03
 daily_loss_pause_pct = 0.05
-# Always shadow at creation. Promotion to is_active=true requires
-# the .claude/skills/tea-promotion-gate checklist + walk-forward.
-shadow = true
+# 2026-04-26: SHADOW OFF — paper mode active.
+# Sprint A model v2 (AUC 0.60 / Brier 0.246 / ECE 0.215) running with
+# guardrails: stake 1.0, max_pos 2.0, daily_loss_limit 10.0,
+# edge_net_min 0.05. Sharpe gate still uses the 0.025 sentinel so
+# entries pass too easily — the conservative stake/cap is the brake.
+# Revert to shadow=true if the strategy enters > 50 trades/day or
+# daily_loss_limit fires repeatedly.
+shadow = false
