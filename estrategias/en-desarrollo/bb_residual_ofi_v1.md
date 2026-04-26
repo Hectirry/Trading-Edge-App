@@ -119,7 +119,81 @@ Cualquiera de estos mata la hipótesis:
 
 ## Resultados
 
-_(populate after first measurement — actualmente vacío.)_
+### 2026-04-26 — primer training honesto
+
+Primer ciclo completo: training pipeline funciona end-to-end y el
+modelo se carga en el engine en paper mode.
+
+| modelo | n_train | n_val | n_test | AUC | Brier | ECE | gate |
+|---|---:|---:|---:|---:|---:|---:|---|
+| **bb_ofi_2026-04-26T01-21-46Z** | 114 | 24 | 26 | **0.6488** | 0.2650 | 0.0550 | failed (Brier marginal) |
+
+- AUC 0.65 ✅ (cap 0.55) — señal real por encima del aleatorio.
+- Brier 0.265 ❌ (cap 0.260 con n<200) — apenas 0.005 por encima del
+  techo sample-size-aware.
+- ECE 0.055 ✅ (cap 0.20 con n<200) — calibración isotónica funcionó.
+
+`is_active=true` aplicado **manualmente** vía SQL (no por `--promote`,
+que respetó el gate Brier) para verificar el modelo en el dashboard.
+
+### Coverage del training set
+
+- Polybot SQLite (`/btc-tendencia-data/polybot-agent.db`): solo **8 días**
+  de ticks 1Hz (2026-04-18 → 2026-04-26), 547 mercados resueltos.
+- Tras dropping por OHLCV gap, ticks insuficientes, micro/implied/vol:
+  **n=164 muestras**.
+- Bottleneck real: tick coverage del polybot. `polymarket_prices_history`
+  ya cubre 28 días pero no compensa la falta de ticks.
+
+### Comportamiento en paper mode
+
+Engine cargó `model.lgb` y emite `bb_ofi.decision` cada segundo por
+mercado activo. Ejemplo de tick en una ventana donde BTC bajó 0.026 %:
+
+```
+spot=77534, open=77555    p_market=0.50
+p_bm=0.30                 (BB prior pondera el bajón correctamente)
+p_edge=0.00               (modelo sobreajustado, predice extremos)
+p_final=0.18              (shrinkage α=0.6)
+edge_net=+0.292           (modelo cree NO con 18% YES vs mercado 50%)
+sharpe=11.68              (artificial — p_edge_sigma=0.025 es sentinel)
+action=SKIP reason=shadow_mode    (bloqueado por [paper].shadow=true)
+```
+
+Comportamiento que esto valida:
+- BB prior funciona: `p_bm` se separa de 0.5 cuando hay drift de spot.
+- Shrinkage α se computa correctamente.
+- Fee convexa correcta (≈3.15 % en p=0.5).
+- Side-picking correcto.
+- Shadow gate funciona: aún con Sharpe nominalmente alto, no entra.
+
+Síntomas de overfit con n=164:
+- `p_edge ∈ {0, 1}` casi siempre — modelo predice clases, no probs.
+- Brier alto (penaliza este patrón explícitamente).
+- Sharpe nominal alto pero sin significado estadístico (denominator =
+  sentinel, no varianza ensemble).
+
+## Veredicto
+
+**Pipeline validado, modelo estadísticamente débil.** El primer
+training completa el ciclo end-to-end y el modelo entra en
+producción shadow, pero AUC 0.65 con n_test=26 (IC ±0.10) no es
+concluyente. Brier marginal sugiere predicciones extremas — síntoma
+de overfit con muestra pequeña.
+
+Cambios necesarios antes de promotion *real* (eliminar override SQL):
+
+1. **Aumentar n** — bottleneck es tick coverage (8 d). Caminos:
+   - Esperar ~2 semanas a que `paper_ticks` acumule cobertura
+     suficiente y portar `_load_ticks_for_slug` a leer de ahí.
+   - Reconstruir spots 1 Hz desde `market_data.crypto_trades` (10.6 M
+     trades en 35 d disponibles ya).
+2. **Reemplazar `p_edge_sigma` sentinel** — entrenar bootstrap
+   ensemble que emita stddev por predicción (típicamente 5-10 modelos
+   con seeds distintos).
+3. **Walk-forward 3 × 7 d** post-bootstrap.
+4. **Shadow paper ≥ 7 d** con paper_predictions logging para auditoría
+   externa.
 
 **Nota sobre data collection en shadow**: la estrategia adjunta
 `signal_features` a cada Decision, pero el `PaperDriver` solo agrega

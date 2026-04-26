@@ -48,40 +48,26 @@ Honesty caveats baked into the code (not buried in a comment far away):
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Protocol
 
 from trading.common.logging import get_logger
-from trading.engine.features.bb_residual import brownian_bridge_prob
 from trading.engine.features.binance_microstructure import (
     binance_microstructure_from_trades,
 )
 from trading.engine.strategy_base import StrategyBase
 from trading.engine.types import Action, Decision, Side, TickContext
+from trading.strategies.polymarket_btc5m._bb_ofi_features import (
+    FEATURE_NAMES,
+    BBOFIFeatureInputs,
+    build_vector,
+    convex_fee,
+)
 from trading.strategies.polymarket_btc5m.last_90s_forecaster_v2 import (
     LGBRunner,  # reused — same n_features guard as v2/v3
 )
 
 log = get_logger("strategy.bb_residual_ofi_v1")
-
-
-FEATURE_NAMES: tuple[str, ...] = (
-    "bb_p_prior",
-    "bb_delta_norm",
-    "ofi_composite",
-    "bm_taker_buy_ratio",
-    "bm_trade_intensity",
-    "bm_large_trade_flag",
-    "bm_signed_autocorr_lag1",
-    "implied_prob_yes",
-    "pm_spread_bps",
-    "pm_imbalance",
-    "t_in_window_s",
-    "vol_per_sqrt_s",
-    "fee_at_market",
-    "alpha_shrinkage",
-)
 
 
 class ModelRunner(Protocol):
@@ -92,39 +78,20 @@ class MicrostructureProviderLike(Protocol):
     def fetch(self, ts: float) -> dict[str, float]: ...
 
 
-def _convex_fee(p_market: float, fee_k: float) -> float:
-    """Spec fee model: ``fee(p) = fee_k · 4·p·(1-p)`` — convex, peaks
-    at p=0.5 (=fee_k), zero at the corners. ``fee_k=0.0315`` matches
-    the worked example in estrategias/en-desarrollo/bb_residual_ofi_v1.md."""
-    p = max(0.0, min(1.0, p_market))
-    return fee_k * 4.0 * p * (1.0 - p)
+# Re-exported for tests + tooling that want the canonical helpers
+# without going through the shared feature module by name.
+_convex_fee = convex_fee
 
 
-def _alpha_shrinkage(
-    *,
-    ofi_abs: float,
-    large_trade_flag: float,
-    t_in_window_s: float,
-    entry_start_s: float,
-    entry_end_s: float,
-    alpha_min: float,
-    alpha_max: float,
-    ofi_gain: float,
-    large_trade_bonus: float,
-) -> float:
-    """Heuristic that scales the model weight up as the OFI signal
-    accumulates. Linear in |OFI|, +bonus on a large-trade event, and
-    a small linear ramp with t_in_window so early-window ticks lean
-    on the BB prior. Clamped to [alpha_min, alpha_max].
+def _alpha_shrinkage(*args, **kwargs):  # type: ignore[no-untyped-def]
+    """Backwards-compatible wrapper kept so the existing unit tests
+    that import the strategy-private helper still work without
+    rewriting their imports."""
+    from trading.strategies.polymarket_btc5m._bb_ofi_features import (
+        alpha_shrinkage as _f,
+    )
 
-    Replace with ensemble-variance-driven α once the ensemble is
-    trained — see strategy docstring for why this is rules-based today.
-    """
-    span = max(1.0, entry_end_s - entry_start_s)
-    t_norm = max(0.0, min(1.0, (t_in_window_s - entry_start_s) / span))
-    base = alpha_min + (alpha_max - alpha_min) * 0.5 * t_norm
-    bonus = ofi_gain * min(1.0, ofi_abs) + large_trade_bonus * large_trade_flag
-    return float(max(alpha_min, min(alpha_max, base + bonus)))
+    return _f(*args, **kwargs)
 
 
 class BBResidualOFIV1(StrategyBase):
@@ -143,6 +110,50 @@ class BBResidualOFIV1(StrategyBase):
 
     def notify_window_rollover(self, new_slug: str) -> None:
         self._per_window_entered.clear()
+
+    def _emit(self, ctx: TickContext, decision: Decision) -> Decision:
+        """Single structured log emission per *informative* decision —
+        i.e. one where the strategy computed at least the BB prior +
+        microstructure block. Early-gate skips ("outside_entry_window",
+        "spread_too_wide", "insufficient_micro_data") are not emitted
+        because they're 90 % of ticks and would drown the signal.
+
+        Tail with: ``scripts/watch_bb_ofi.py`` (or
+        ``docker logs -f tea-engine 2>&1 | grep bb_ofi.decision``).
+        """
+        f = decision.signal_features or {}
+        # ``side`` from the Decision is "NONE" on every SKIP path —
+        # use the strategy-inferred better side from features when
+        # available so the dashboard can colour the arrow even before
+        # a real model is loaded.
+        inferred_side = str(f.get("side_picked", decision.side.value))
+        log.info(
+            "bb_ofi.decision",
+            slug=ctx.market_slug,
+            t_in_window=round(float(ctx.t_in_window), 2),
+            action=decision.action.value,
+            side=inferred_side,
+            reason=decision.reason,
+            spot=round(float(ctx.spot_price), 2),
+            open=round(float(ctx.open_price), 2),
+            p_market=round(float(ctx.implied_prob_yes), 4),
+            p_bm=round(float(f.get("bb_p_prior", 0.0)), 4),
+            p_edge=round(float(f.get("p_edge", 0.0)), 4),
+            p_final=round(float(f.get("p_final", 0.0)), 4),
+            edge_net=round(float(f.get("edge_net", 0.0)), 4),
+            sharpe=round(float(f.get("sharpe", 0.0)), 2),
+            sharpe_th=round(float(f.get("sharpe_threshold_eff", 0.0)), 2),
+            ofi=round(float(f.get("ofi_composite", 0.0)), 3),
+            cvd_bm=round(float(f.get("ofi_composite", 0.0)), 3),
+            taker_buy=round(float(f.get("bm_taker_buy_ratio", 0.5)), 3),
+            intensity=round(float(f.get("bm_trade_intensity", 1.0)), 2),
+            large_trade=int(f.get("bm_large_trade_flag", 0.0)),
+            alpha=round(float(f.get("alpha_shrinkage", 0.0)), 2),
+            fee=round(float(f.get("fee_at_market", 0.0)), 4),
+            spread_bps=round(float(ctx.pm_spread_bps), 1),
+            shadow=bool(f.get("shadow", False)),
+        )
+        return decision
 
     def should_enter(self, ctx: TickContext) -> Decision:
         p = self.params
@@ -191,35 +202,6 @@ class BBResidualOFIV1(StrategyBase):
         if len(spots) < 60:
             return Decision(Action.SKIP, reason="insufficient_micro_data")
 
-        # σ per sqrt(second) from 1 Hz log-returns over the last 90 s,
-        # same scale brownian_bridge_prob expects.
-        rets = [
-            math.log(spots[i] / spots[i - 1])
-            for i in range(1, len(spots))
-            if spots[i - 1] > 0 and spots[i] > 0
-        ]
-        if len(rets) < 30:
-            return Decision(Action.SKIP, reason="insufficient_returns")
-        mu_r = sum(rets) / len(rets)
-        var_r = sum((r - mu_r) ** 2 for r in rets) / len(rets)
-        vol_per_sqrt_s = math.sqrt(max(var_r, 0.0))
-
-        p_bm = brownian_bridge_prob(
-            spot=ctx.spot_price,
-            open_=ctx.open_price,
-            t_in_window_s=ctx.t_in_window,
-            vol_per_sqrt_s=vol_per_sqrt_s,
-            T=bb_T,
-        )
-        # Normalised window delta (z-score of the no-drift bridge). Logged
-        # for the paper-prediction trail; not consumed by p_final.
-        denom = (
-            ctx.open_price * vol_per_sqrt_s * math.sqrt(max(bb_T - ctx.t_in_window, 1e-6))
-            if ctx.open_price > 0 and vol_per_sqrt_s > 0
-            else 0.0
-        )
-        delta_norm = (ctx.spot_price - ctx.open_price) / denom if denom > 0 else 0.0
-
         if self.ms_provider is not None:
             ms = self.ms_provider.fetch(ctx.ts)
         else:
@@ -233,62 +215,84 @@ class BBResidualOFIV1(StrategyBase):
                 large_threshold_usd=large_threshold_usd,
             )
 
-        ofi_binance = float(ms["bm_cvd_normalized"])
-        ofi_composite = ofi_binance  # ofi_coinbase_weight enforced 0 above
-        alpha = _alpha_shrinkage(
-            ofi_abs=abs(ofi_composite),
-            large_trade_flag=float(ms["bm_large_trade_flag"]),
+        # Single source of truth — same builder that the training CLI
+        # uses, so train/serve cannot drift.
+        inputs = BBOFIFeatureInputs(
+            spot_price=ctx.spot_price,
+            open_price=ctx.open_price,
             t_in_window_s=ctx.t_in_window,
-            entry_start_s=entry_start,
-            entry_end_s=entry_end,
+            spots_last_90s=spots,
+            implied_prob_yes=ctx.implied_prob_yes,
+            pm_spread_bps=ctx.pm_spread_bps,
+            pm_imbalance=ctx.pm_imbalance,
+            ms_features=ms,
+            bb_T_seconds=bb_T,
+            fee_k=fee_k,
             alpha_min=alpha_min,
             alpha_max=alpha_max,
-            ofi_gain=alpha_ofi_gain,
-            large_trade_bonus=alpha_large_trade_bonus,
+            alpha_ofi_gain=alpha_ofi_gain,
+            alpha_large_trade_bonus=alpha_large_trade_bonus,
+            entry_window_start_s=entry_start,
+            entry_window_end_s=entry_end,
         )
+        # Need σ-validity before calling the model: realized_vol_per_sqrt_s
+        # returns 0.0 when fewer than 30 valid log-returns exist, which
+        # would make the BB prior degenerate to 0.5.
+        if len(spots) >= 31:
+            n_valid = sum(
+                1 for i in range(1, len(spots)) if spots[i - 1] > 0 and spots[i] > 0
+            )
+        else:
+            n_valid = 0
+        if n_valid < 30:
+            return Decision(Action.SKIP, reason="insufficient_returns")
 
-        p_market = float(ctx.implied_prob_yes)
-        fee = _convex_fee(p_market, fee_k)
-
-        vec = [
-            p_bm,
-            delta_norm,
-            ofi_composite,
-            float(ms["bm_taker_buy_ratio"]),
-            float(ms["bm_trade_intensity"]),
-            float(ms["bm_large_trade_flag"]),
-            float(ms["bm_signed_autocorr_lag1"]),
-            p_market,
-            float(ctx.pm_spread_bps),
-            float(ctx.pm_imbalance),
-            float(ctx.t_in_window),
-            vol_per_sqrt_s,
-            fee,
-            alpha,
-        ]
-        features = dict(zip(FEATURE_NAMES, vec, strict=True))
+        vec, features = build_vector(inputs)
         features["shadow"] = shadow
+        # Local aliases for the legacy inline references below.
+        p_bm = features["bb_p_prior"]
+        ofi_composite = features["ofi_composite"]
+        alpha = features["alpha_shrinkage"]
+        vol_per_sqrt_s = features["vol_per_sqrt_s"]
+        p_market = float(ctx.implied_prob_yes)
+        fee = features["fee_at_market"]
 
         if self.model is None:
             # Honest no-edge identity: p_edge ≡ p_bm so we never silently
-            # invent edge from the prior alone.
+            # invent edge from the prior alone. We still pick the
+            # better-side edge so the shadow log + dashboard show a
+            # meaningful direction (the BB prior alone tells you
+            # whether spot has drifted above or below the strike).
             features["p_edge"] = p_bm
             features["p_final"] = p_bm
-            features["edge_net"] = (p_bm - p_market) - fee
-            return Decision(
-                Action.SKIP,
-                reason="shadow_mode_no_model",
-                signal_features=features,
+            edge_yes_nm = (p_bm - p_market) - fee
+            edge_no_nm = (p_market - p_bm) - fee
+            if edge_yes_nm >= edge_no_nm:
+                features["edge_net"] = edge_yes_nm
+                features["side_picked"] = Side.YES_UP.value
+            else:
+                features["edge_net"] = edge_no_nm
+                features["side_picked"] = Side.YES_DOWN.value
+            return self._emit(
+                ctx,
+                Decision(
+                    Action.SKIP,
+                    reason="shadow_mode_no_model",
+                    signal_features=features,
+                ),
             )
 
         try:
             p_edge = float(self.model.predict_proba(vec))
         except Exception as e:
             log.warning("bb_ofi.model_predict_err", err=str(e))
-            return Decision(
-                Action.SKIP,
-                reason="model_predict_err",
-                signal_features=features,
+            return self._emit(
+                ctx,
+                Decision(
+                    Action.SKIP,
+                    reason="model_predict_err",
+                    signal_features=features,
+                ),
             )
         p_edge = max(0.0, min(1.0, p_edge))
         p_final = alpha * p_edge + (1.0 - alpha) * p_bm
@@ -325,40 +329,52 @@ class BBResidualOFIV1(StrategyBase):
         )
 
         if edge_net < edge_net_min:
-            return Decision(
-                Action.SKIP,
-                reason="edge_net_below_floor",
-                signal_features=features,
+            return self._emit(
+                ctx,
+                Decision(
+                    Action.SKIP,
+                    reason="edge_net_below_floor",
+                    signal_features=features,
+                ),
             )
         if sharpe < sharpe_th_eff:
-            return Decision(
-                Action.SKIP,
-                reason="sharpe_below_threshold",
-                signal_features=features,
+            return self._emit(
+                ctx,
+                Decision(
+                    Action.SKIP,
+                    reason="sharpe_below_threshold",
+                    signal_features=features,
+                ),
             )
 
         if shadow:
-            return Decision(
-                Action.SKIP,
-                reason="shadow_mode",
-                signal_features=features,
+            return self._emit(
+                ctx,
+                Decision(
+                    Action.SKIP,
+                    reason="shadow_mode",
+                    signal_features=features,
+                ),
             )
 
         self._per_window_entered.add(ctx.market_slug)
-        return Decision(
-            action=Action.ENTER,
-            side=side,
-            signal_features=features,
-            signal_breakdown={
-                "edge_net": edge_net,
-                "sharpe": sharpe,
-                "p_final": p_final,
-                "p_bm": p_bm,
-                "alpha": alpha,
-            },
-            reason=(
-                f"edge_net={edge_net:+.4f} sharpe={sharpe:.2f} "
-                f"p_final={p_final:.4f} p_bm={p_bm:.4f} alpha={alpha:.2f}"
+        return self._emit(
+            ctx,
+            Decision(
+                action=Action.ENTER,
+                side=side,
+                signal_features=features,
+                signal_breakdown={
+                    "edge_net": edge_net,
+                    "sharpe": sharpe,
+                    "p_final": p_final,
+                    "p_bm": p_bm,
+                    "alpha": alpha,
+                },
+                reason=(
+                    f"edge_net={edge_net:+.4f} sharpe={sharpe:.2f} "
+                    f"p_final={p_final:.4f} p_bm={p_bm:.4f} alpha={alpha:.2f}"
+                ),
             ),
         )
 
