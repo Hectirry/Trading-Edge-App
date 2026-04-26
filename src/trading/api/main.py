@@ -17,7 +17,7 @@ from pathlib import Path
 
 import redis.asyncio as redis
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from trading.api import db as apidb
@@ -50,6 +50,7 @@ configure_logging()
 log = get_logger("api")
 
 TEMPLATES = Jinja2Templates(directory="src/trading/api/templates")
+DASHBOARD_DIR = Path("src/trading/api/dashboard").resolve()
 
 app = FastAPI(title="TEA API", version="0.4.0")
 
@@ -506,6 +507,130 @@ async def research_chat(request: Request, session_id: str | None = None):
             "default_model": get_settings().llm_default_model,
         },
     )
+
+
+# --------------------------------------------------- JSON: dashboard view-model
+
+
+@app.get("/api/v1/dashboard/overview", dependencies=[Depends(require_token)])
+async def api_dashboard_overview():
+    """Aggregated view-model for the React dashboard.
+
+    Returns engine state, per-strategy live metrics (24h+7d PnL, n_trades,
+    rolling win rate from last 50 settles), recent trades and a slice of
+    backtests in one round-trip so the SPA can render without N requests.
+    """
+    status = await _status_payload()
+    now = datetime.now(tz=UTC)
+    last_24h_start = now - timedelta(hours=24)
+    last_7d_start = now - timedelta(days=7)
+
+    strategies_aug: list[dict] = []
+    pnl_24h_total = 0.0
+    pnl_7d_total = 0.0
+    n_trades_24h_total = 0
+
+    for s in status["strategies"]:
+        name = s["name"]
+        p24 = await apidb.pnl_in_period(last_24h_start, now, name)
+        p7d = await apidb.pnl_in_period(last_7d_start, now, name)
+        # Rolling win rate from last 50 settled trades.
+        recent = await apidb.recent_trades(50, name)
+        pnls = [float(t["pnl"]) for t in recent if t.get("pnl") is not None]
+        wins = sum(1 for p in pnls if p > 0)
+        win_rate = (wins / len(pnls)) if pnls else 0.0
+        strategies_aug.append(
+            {
+                "id": name,
+                "name": name,
+                "label": name,
+                "venue": "Polymarket",
+                "asset": "BTC-5min",
+                "status": "paused" if s["paused"] else "running",
+                "enabled": s["enabled"],
+                "paused": s["paused"],
+                "pnl_24h": float(p24["pnl"]),
+                "pnl_7d": float(p7d["pnl"]),
+                "n_trades_24h": int(p24["n_trades"]),
+                "win_rate": win_rate,
+                # Sharpe / MDD / heartbeat / horizon are not currently
+                # exposed via the API; the dashboard renders 0 / "—" for
+                # these. Wiring them requires research.strategy_health
+                # rollups or a per-strategy heartbeat key in Redis.
+                "sharpe": 0.0,
+                "mdd": 0.0,
+                "horizon_s": 300,
+                "last_signal_s": 0,
+                "heartbeat_ms": 0,
+            }
+        )
+        pnl_24h_total += float(p24["pnl"])
+        pnl_7d_total += float(p7d["pnl"])
+        n_trades_24h_total += int(p24["n_trades"])
+
+    recent_all = await apidb.recent_trades(20, None)
+
+    def _trade_to_dict(t: dict) -> dict:
+        ts = t.get("ts_submit")
+        pnl = t.get("pnl")
+        entry = t.get("entry_price")
+        exit_ = t.get("exit_price")
+        return {
+            "t": ts.strftime("%H:%M:%S") if ts else "",
+            "strat": t.get("strategy_id") or "",
+            "side": "BUY" if (entry is not None and exit_ is not None and float(exit_) >= float(entry)) else "SELL",
+            "venue": "Polymarket",
+            "sym": t.get("instrument_id") or "",
+            "px": f"{float(entry):.4f}" if entry is not None else "",
+            "qty": 1,
+            "pnl": float(pnl) if pnl is not None else 0.0,
+        }
+
+    backtests = await apidb.list_backtests(limit=50)
+    return {
+        "engine": {
+            "up": bool(status["engine_up"]),
+            "kill_switch_active": bool(status["kill_switch_active"]),
+            "heartbeat_age_s": status["heartbeat_age_s"],
+        },
+        "strategies": strategies_aug,
+        "totals": {
+            "pnl_24h": pnl_24h_total,
+            "pnl_7d": pnl_7d_total,
+            "n_trades_24h": n_trades_24h_total,
+        },
+        "recent_trades": [_trade_to_dict(t) for t in recent_all],
+        "backtests": [_backtest_row_to_dict(r) for r in backtests],
+    }
+
+
+# --------------------------------------------------------- HTML: dashboard (React)
+
+
+@app.get("/dashboard", include_in_schema=False)
+async def dashboard_root(request: Request):
+    # Trailing slash so relative asset URLs (src/*.jsx, data/*.json) resolve
+    # under /dashboard/ instead of /.
+    return RedirectResponse("/dashboard/", status_code=308)
+
+
+@app.get("/dashboard/", include_in_schema=False)
+@app.get("/dashboard/{subpath:path}", include_in_schema=False)
+async def dashboard_static(request: Request, subpath: str = ""):
+    redir = _cookie_auth_or_redirect(request)
+    if redir:
+        return redir
+    if not subpath or subpath.endswith("/"):
+        target = DASHBOARD_DIR / "index.html"
+    else:
+        target = (DASHBOARD_DIR / subpath).resolve()
+        try:
+            target.relative_to(DASHBOARD_DIR)
+        except ValueError as e:
+            raise HTTPException(status_code=403, detail="forbidden") from e
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(target)
 
 
 # --------------------------------------------------------------- helpers

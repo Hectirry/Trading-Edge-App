@@ -150,7 +150,7 @@ services:
     labels:
       traefik.enable: "true"
       traefik.docker.network: "tea_edge"
-      traefik.http.routers.tea-api.rule: "Host(`187-124-130-221.nip.io`) && (PathPrefix(`/research`) || PathPrefix(`/api`))"
+      traefik.http.routers.tea-api.rule: "Host(`187-124-130-221.nip.io`) && (PathPrefix(`/research`) || PathPrefix(`/api`) || PathPrefix(`/login`) || PathPrefix(`/dashboard`))"
       traefik.http.routers.tea-api.entrypoints: "websecure"
       traefik.http.routers.tea-api.tls: "true"
       traefik.http.routers.tea-api.tls.certresolver: "letsencrypt"
