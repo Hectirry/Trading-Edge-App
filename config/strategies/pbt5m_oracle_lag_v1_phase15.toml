@@ -1,0 +1,60 @@
+name = "oracle_lag_v1"
+description = "Phase 1.5 eval — cesta 0.5 Binance + 0.3 Coinbase + 0.2 OKX + USDT basis."
+
+[params]
+entry_window_start_s = 285.0
+entry_window_end_s = 297.0
+sigma_lookback_s = 90.0
+sigma_min_ticks = 60
+ewma_lambda = 0.94
+fee_a = 0.005
+fee_b = 0.025
+ev_threshold = 0.005
+usdt_basis_phase0 = 1.0
+
+[cesta]
+enabled = true
+weight_binance = 0.5
+weight_coinbase = 0.3
+weight_okx = 0.2
+# Kraken excluded — REST OHLC capped at ~720 candles, only ~4h of recent
+# data backfilled. Live stream + multi-week soak would unlock it.
+weight_kraken = 0.0
+
+[sizing]
+stake_usd = 5.0
+kelly_fraction = 0.25
+kelly_min_trades = 20
+kelly_max_stake_usd = 15.0
+
+[backtest]
+earliest_entry_t_s = 285
+latest_entry_t_s = 297
+window_seconds = 300
+decision_interval_s = 1
+
+[fill_model]
+slippage_bps = 10.0
+fill_probability = 1.0
+apply_fee_in_backtest = true
+fee_k = 0.05
+
+[risk]
+bypass_in_backtest = true
+cooldown_seconds = 30
+max_position_size_usd = 15.0
+daily_loss_limit_usd = 50.0
+daily_trade_limit = 999999
+min_edge_bps = 0
+min_z_score = 0.0
+min_pm_depth_usd = 15.0
+skip_if_spread_bps = 500
+loss_pause_threshold_usd = 5.0
+loss_pause_window_minutes = 30
+loss_pause_duration_minutes = 30
+
+[paper]
+shadow = false
+capital_usd = 1000.0
+daily_loss_alert_pct = 0.03
+daily_loss_pause_pct = 0.05

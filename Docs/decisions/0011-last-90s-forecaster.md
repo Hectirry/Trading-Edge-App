@@ -1,7 +1,11 @@
 # ADR 0011 — last_90s_forecaster v1 (rules) + v2 (LightGBM)
 
 Date: 2026-04-23
-Status: Accepted
+Status: Partially superseded — v1 and v2 deleted 2026-04-26 (v1 win
+rate 28.7 % was payoff-asymmetric noise; v2 replaced by v3 sharing the
+same trainer). v3 now lives without sibling versions. The promotion-gate
+thresholds (AUC ≥ 0.55 / Brier ≤ 0.245 / ECE ≤ 0.05) and Kelly-fractional
+sizing decisions stay in force for v3.
 Scope: Phase 3.6
 
 ## Context

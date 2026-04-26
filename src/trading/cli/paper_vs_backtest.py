@@ -32,10 +32,7 @@ log = get_logger("cli.paper_vs_backtest")
 
 STRATEGIES = (
     "trend_confirm_t1_v1",
-    "last_90s_forecaster_v1",
-    "last_90s_forecaster_v2",
-    "contest_ensemble_v1",
-    "contest_avengers_v1",
+    "last_90s_forecaster_v3",
 )
 DRIFT_WARN_PCT = 30.0
 DRIFT_FAIL_PCT = 60.0

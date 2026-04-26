@@ -838,16 +838,14 @@ shadow mode (SKIPs every ENTER, logs features + probs for analysis).
 
 ## Phase 3.8 — Walk-forward automation
 
-Unified CLI `trading.cli.walk_forward` runs walk-forward across all
-seven strategies. Two execution paths inside:
+Unified CLI `trading.cli.walk_forward`. Two execution paths inside:
 
-- ML (`hmm_regime_btc5m`, `last_90s_forecaster_v2`,
-  `contest_ensemble_v1`) — refit the model on each IS window and
+- ML (`hmm_regime_btc5m`, `last_90s_forecaster_v3`,
+  `bb_residual_ofi_v1`) — refit the model on each IS window and
   evaluate AUC/Brier on OOS.
-- Rules (`imbalance_v3`, `trend_confirm_t1_v1`,
-  `last_90s_forecaster_v1`, `contest_avengers_v1`) — replay via the
-  Phase-2 `run_walk_forward` infrastructure over polybot SQLite,
-  measuring trade count + PnL per fold.
+- Rules (`trend_confirm_t1_v1`) — replay via the Phase-2
+  `run_walk_forward` infrastructure over polybot SQLite, measuring
+  trade count + PnL per fold.
 
 Defaults: 5-day IS / 1-day OOS / step 1-day (approved for 3.8).
 Results land in `research.walk_forward_runs` (per-fold detail in
@@ -861,15 +859,16 @@ insufficient_folds} the operator can act on.
 ```bash
 # ML — rolling retrain
 docker compose exec tea-engine python -m trading.cli.walk_forward \
-    --strategy last_90s_forecaster_v2 \
+    --strategy last_90s_forecaster_v3 \
     --from 2026-03-01 --to 2026-04-20
 
 # Rules — replay
 docker compose exec tea-engine python -m trading.cli.walk_forward \
-    --strategy imbalance_v3 \
-    --params config/strategies/pbt5m_imbalance_v3.toml \
+    --strategy trend_confirm_t1_v1 \
+    --params config/strategies/pbt5m_trend_confirm_t1_v1.toml \
     --from 2026-01-01 --to 2026-04-20 \
-    --polybot-db /polybot-btc5m-data/polybot.db
+    --polybot-db /btc-tendencia-data/polybot-agent.db \
+    --slug-encodes-open-ts
 ```
 
 ### Scheduled cron
@@ -883,6 +882,51 @@ staggered over 7 minutes) using a trailing 30-day window.
 `TEA — Walk-forward` (Grafana, uid `tea-walk-forward`): table of
 runs, median AUC_oos timeline by strategy, stability index timeline,
 and per-fold detail for the most recent run of each strategy.
+
+## Phase 3.9 — Monte Carlo evaluation
+
+Two MC modes for completed backtests, persisted to `research.mc_runs`
+(see `infra/postgres/init/12_mc_runs.sql`):
+
+- **bootstrap** — resamples the realized trade vector with replacement.
+  Reports realized + percentile distribution for total PnL, win rate,
+  per-trade Sharpe, and max DD. Includes a coin-flip permutation
+  p-value over wins/losses. Cheap (~seconds for 1k iter).
+- **block** — re-runs `run_backtest` against bootstrap-resampled 5-min
+  Polymarket markets. Strategy state is reset per replicate via the
+  factory closure; heavy artifacts (LightGBM runners, macro provider)
+  load once. Cost is `n_iter × backtest_runtime`.
+
+```bash
+# Both flavors at once (default --kind=both):
+docker compose exec tea-engine python -m trading.cli.mc \
+  --strategy polymarket_btc5m/last_90s_forecaster_v3 \
+  --params config/strategies/pbt5m_last_90s_forecaster_v3.toml \
+  --from 2026-04-01T00:00:00Z --to 2026-04-20T00:00:00Z \
+  --source polybot_sqlite --polybot-db /polybot-btc5m-data/polybot.db \
+  --kind both --n-iter 1000
+
+# Smoke test without DB writes:
+docker compose exec tea-engine python -m trading.cli.mc \
+  ... --kind bootstrap --n-iter 200 --no-persist
+```
+
+Bootstrap verdict (column `verdict` on `kind='bootstrap'` rows) ∈
+{`edge_likely`, `no_edge`, `inconclusive`} per the heuristic in
+`research/monte_carlo.py:verdict_from_bootstrap`:
+
+- `edge_likely` — p5 of total PnL > 0 **AND** permutation p-value < 0.05.
+- `no_edge`     — p5 of total PnL ≤ 0 **OR** permutation p-value ≥ 0.10.
+- `inconclusive` — anything in between.
+
+The verdict is informative, not a promotion gate. Promotion still
+requires the AUC/Brier/ECE thresholds in ADR 0011 and the walk-forward
+checks. MC adds context on how tight the backtest result was; it does
+not rescue a strategy that failed walk-forward.
+
+`engine/monte_carlo.py` is **unrelated** — that's a per-strategy
+spot-price bootstrap for the `mc_prob_up` confirmation gate used inside
+`trend_confirm_t1_v1`. Do not merge.
 
 ## Phase 0 acceptance — status
 

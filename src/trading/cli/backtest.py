@@ -69,6 +69,80 @@ async def _load_macro_provider(*, from_ts: datetime, to_ts: datetime) -> FixedMa
     return FixedMacroProvider(candles=candles)
 
 
+async def _load_oracle_lag_cesta(config: dict):
+    """Pre-load Coinbase BTC/USD 1m + implicit USDT basis from Postgres.
+
+    The window is intentionally generous (1 day before .. 1 day after the
+    current process tick) — backtest period bounds aren't trivial to
+    propagate here, and the lookups are O(log n) per tick anyway.
+    """
+    from trading.strategies.polymarket_btc5m._oracle_lag_cesta import (
+        CestaProvider,
+        CestaWeights,
+    )
+
+    cesta_cfg = config.get("cesta", {})
+    enabled = bool(cesta_cfg.get("enabled", False))
+    if not enabled:
+        return None
+
+    weights = CestaWeights(
+        binance=float(cesta_cfg.get("weight_binance", 0.40)),
+        bybit=float(cesta_cfg.get("weight_bybit", 0.10)),
+        coinbase=float(cesta_cfg.get("weight_coinbase", 0.25)),
+        okx=float(cesta_cfg.get("weight_okx", 0.15)),
+        kraken=float(cesta_cfg.get("weight_kraken", 0.10)),
+    )
+
+    # Pre-load 90 days of 1m data — the strategy only ever looks at the
+    # current ts, but loading wider keeps a single backtest run from
+    # being clipped at the edges of the requested period.
+    from trading.engine.features.usdt_basis import load_basis_series
+
+    async def _series(conn, exchange: str, symbol: str) -> list[tuple[float, float]]:
+        rows = await conn.fetch(
+            "SELECT EXTRACT(EPOCH FROM ts)::float8 AS ts, close::float8 AS px "
+            "FROM market_data.crypto_ohlcv "
+            "WHERE exchange=$1 AND symbol=$2 AND interval='1m' "
+            "ORDER BY ts",
+            exchange,
+            symbol,
+        )
+        return [(float(r["ts"]), float(r["px"])) for r in rows]
+
+    async with acquire() as conn:
+        coinbase_series = await _series(conn, "coinbase", "BTCUSD")
+        bybit_series = await _series(conn, "bybit", "BTCUSDT")
+        okx_series = await _series(conn, "okx", "BTCUSDT")
+        kraken_series = await _series(conn, "kraken", "BTCUSD")
+
+        if coinbase_series:
+            basis_from = coinbase_series[0][0]
+            basis_to = coinbase_series[-1][0]
+        else:
+            basis_from = 0.0
+            basis_to = 0.0
+        basis_series = await load_basis_series(conn, basis_from, basis_to)
+
+    log.info(
+        "oracle_lag.cesta.loaded",
+        coinbase_n=len(coinbase_series),
+        bybit_n=len(bybit_series),
+        okx_n=len(okx_series),
+        kraken_n=len(kraken_series),
+        basis_n=len(basis_series),
+        weights=weights.normalised().__dict__,
+    )
+    return CestaProvider(
+        coinbase_series=coinbase_series,
+        bybit_series=bybit_series,
+        okx_series=okx_series,
+        kraken_series=kraken_series,
+        basis_series=basis_series,
+        weights=weights,
+    )
+
+
 async def _load_strategy(name: str, config: dict, macro_provider):
     if name == "polymarket_btc5m/trend_confirm_t1_v1":
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import (
@@ -76,20 +150,16 @@ async def _load_strategy(name: str, config: dict, macro_provider):
         )
 
         return TrendConfirmT1V1(config=config)
-    if name == "polymarket_btc5m/last_90s_forecaster_v1":
-        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v1 import (
-            Last90sForecasterV1,
-        )
+    if name == "polymarket_btc5m/oracle_lag_v1":
+        from trading.strategies.polymarket_btc5m.oracle_lag_v1 import OracleLagV1
 
-        return Last90sForecasterV1(config, macro_provider=macro_provider)
-    if name == "polymarket_btc5m/last_90s_forecaster_v2":
-        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v2 import (
-            Last90sForecasterV2,
-            load_runner_async,
-        )
+        cesta = await _load_oracle_lag_cesta(config)
+        return OracleLagV1(config=config, cesta=cesta)
+    if name == "polymarket_btc5m/oracle_lag_v2":
+        from trading.strategies.polymarket_btc5m.oracle_lag_v2 import OracleLagV2
 
-        runner = await load_runner_async()
-        return Last90sForecasterV2(config, macro_provider=macro_provider, model=runner)
+        cesta = await _load_oracle_lag_cesta(config)
+        return OracleLagV2(config=config, cesta=cesta)
     if name == "polymarket_btc5m/last_90s_forecaster_v3":
         from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
             Last90sForecasterV3,
@@ -110,20 +180,6 @@ async def _load_strategy(name: str, config: dict, macro_provider):
 
         runner = await bb_ofi_load_runner_async()
         return BBResidualOFIV1(config, model=runner)
-    if name == "polymarket_btc5m/contest_ensemble_v1":
-        from trading.strategies.polymarket_btc5m.contest_ensemble_v1 import (
-            ContestEnsembleV1,
-            load_meta_model_async_factory,
-        )
-
-        meta_model = await load_meta_model_async_factory()()
-        return ContestEnsembleV1(config, macro_provider=macro_provider, meta_model=meta_model)
-    if name == "polymarket_btc5m/contest_avengers_v1":
-        from trading.strategies.polymarket_btc5m.contest_avengers_v1 import (
-            ContestAvengersV1,
-        )
-
-        return ContestAvengersV1(config, macro_provider=macro_provider)
     raise SystemExit(f"unknown strategy: {name}")
 
 
@@ -135,9 +191,7 @@ async def _run(args: argparse.Namespace) -> None:
     create_trading_node(mode="backtest", strategy_name=args.strategy)
 
     if args.source == "polybot_sqlite":
-        warn_if_polybot_stale(
-            args.polybot_db, expected_window_end_ts=args.to_ts.timestamp()
-        )
+        warn_if_polybot_stale(args.polybot_db, expected_window_end_ts=args.to_ts.timestamp())
         loader = PolybotSQLiteLoader(
             db_path=args.polybot_db,
             slug_encodes_open_ts=args.slug_encodes_open_ts,

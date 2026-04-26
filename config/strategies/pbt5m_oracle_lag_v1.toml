@@ -1,0 +1,107 @@
+# oracle_lag_v1 — Phase 0 (Binance-only, USDT basis sentinel).
+# See estrategias/en-desarrollo/oracle_lag_v1.md and ADR 0013.
+
+name = "oracle_lag_v1"
+description = "Φ(δ/σ√τ) analytic — Binance spot, no USDT correction. Phase 0 of ADR 0013."
+
+[params]
+# T-15s to T-3s. Outside this band, σ√τ dominates δ and prediction → 0.5.
+entry_window_start_s = 285.0
+entry_window_end_s = 297.0
+
+# σ EWMA over last 90 s of 1 Hz ticks. Need ≥ 60 valid ticks before
+# trusting it.
+sigma_lookback_s = 90.0
+sigma_min_ticks = 60
+ewma_lambda = 0.94
+
+# Polymarket 2026 dynamic taker fee: fee(p) = fee_a + fee_b · 4·p·(1-p).
+# Reproduces the brief's "1.56-3.15 % at p=0.5" envelope (peak = a + b at
+# p=0.5; floor at p=0/1 is just a).
+fee_a = 0.005
+fee_b = 0.025
+
+# Minimum EV per share after fee. 0.5¢/share is restrictive on purpose:
+# the brief reports realistic edges of $0.12-0.13/share post-fee in the
+# canonical example, so a 0.005 floor admits roughly the top 1/3 of
+# what the analytic claims is signal.
+ev_threshold = 0.005
+
+# Phase 0 fallback when [cesta].enabled = false.
+usdt_basis_phase0 = 1.0
+
+# Sprint A.2 — entry-price ceiling. 95.6 % del PnL viene de trades con
+# entry < $0.30; trades ≥ $0.50 ruidosos. Filtro a 0.50 lift Sharpe/trade
+# de 0.292 → 0.432 con -50 % n_trades.
+max_entry_price = 0.50
+
+# Sprint B.1 — OFI confirmation gate (tick-rule proxy). SKIP cuando
+# sign(δ) ≠ sign(CVD-tick-rule sobre últimos 30 s). Sharpe/trade pasa
+# de 0.432 → 0.469 con -21 % n_trades adicional.
+ofi_enabled = true
+ofi_window_s = 30.0
+ofi_min_strength = 0.10
+
+[cesta]
+# 5-venue cesta enabled 2026-04-26 (override del kill-switch Sprint 5
+# OKX para test multi-venue completo). USD-native: Coinbase, Kraken.
+# USDT-denominado (corregido por basis): Binance, Bybit, OKX. Venues
+# stale (>5 min) caen automáticamente y su peso se redistribuye.
+enabled = true
+weight_binance = 0.40
+weight_bybit = 0.10
+weight_coinbase = 0.25
+weight_okx = 0.15
+weight_kraken = 0.10
+
+[sizing]
+# Conservative first-paper-deploy stake. Lift to $5 once trailing 7d
+# paper PnL clears the WR > 50 % / PnL > 0 thresholds (ADR 0013 §
+# Decisions delegated). Kelly kicks in after kelly_min_trades settled.
+stake_usd = 2.0
+kelly_fraction = 0.25
+kelly_min_trades = 20
+kelly_max_stake_usd = 6.0
+
+[backtest]
+earliest_entry_t_s = 285
+latest_entry_t_s = 297
+window_seconds = 300
+decision_interval_s = 1
+
+[fill_model]
+slippage_bps = 10.0
+fill_probability = 1.0
+# Match params.fee_a/fee_b in the strategy. The driver applies a
+# different parabolic fee model at settlement (fee_k · p · (1-p) ·
+# stake) — kept enabled for parity with v3 / trend_confirm but the
+# realised PnL impact is small at our edges. Sprint 4 alignment:
+# unify fill_model fee with strategy fee_a/fee_b.
+apply_fee_in_backtest = true
+fee_k = 0.05
+
+[risk]
+bypass_in_backtest = true
+cooldown_seconds = 30
+max_position_size_usd = 15.0
+daily_loss_limit_usd = 50.0
+daily_trade_limit = 999999
+min_edge_bps = 0
+min_z_score = 0.0
+min_pm_depth_usd = 15.0
+skip_if_spread_bps = 500
+loss_pause_threshold_usd = 5.0
+loss_pause_window_minutes = 30
+loss_pause_duration_minutes = 30
+
+[paper]
+capital_usd = 1000.0
+daily_loss_alert_pct = 0.03
+daily_loss_pause_pct = 0.05
+# 2026-04-26 — promotion to active paper. Operator flip per ADR 0013
+# § Decisions NOT delegated. Phase 0 Binance-only on first deploy
+# (cesta-provider live-refresh deferred to v1.1). Sprint 1 backtest
+# (Binance-only) showed Sharpe/trade 0.239 and permutation pv 0.002,
+# which is the configuration this paper run validates against
+# real production books.
+shadow = false

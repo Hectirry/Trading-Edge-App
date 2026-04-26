@@ -1,13 +1,14 @@
-"""Training CLI for last_90s_forecaster_v2 (ADR 0011).
+"""Training CLI for last_90s_forecaster_v3 (ADR 0011).
 
 Reads resolved BTC up/down 5 m markets from the polybot-btc5m and
 polybot-agent SQLite files (read-only), joins against TEA
 ``market_data.crypto_ohlcv`` for BTCUSDT 1 s + 5 m candles, builds the
-V2 feature vector at each market's t=210 s, trains a LightGBM
-classifier with Optuna hyper-parameter search, evaluates on a held-out
-tail, optionally calibrates with isotonic regression, writes the
-artefacts under ``models/last_90s_forecaster_v2/<version>/``, and
-upserts a ``research.models`` row (``is_active`` toggleable).
+v3 feature vector (21 base + 5 Binance microstructure) at each market's
+t=210 s, trains a LightGBM classifier with Optuna hyper-parameter
+search, evaluates on a held-out tail, optionally calibrates with
+isotonic regression, writes the artefacts under
+``models/last_90s_forecaster_v3/<version>/``, and upserts a
+``research.models`` row (``is_active`` toggleable).
 
 Promotion gate: ``AUC_test ≥ 0.55 AND Brier_test ≤ 0.245 AND
 ECE_val ≤ 0.05``. Failing any gate → row written with ``is_active =
@@ -738,21 +739,7 @@ def main() -> int:
     ap.add_argument("--optuna-trials", type=int, default=200)
     ap.add_argument("--time-budget-s", type=int, default=3600)
     ap.add_argument("--promote", action="store_true")
-    ap.add_argument(
-        "--include-bb-residual",
-        action="store_true",
-        help="Append the 4 bb_residual features at the end of the vector "
-        "(produces a 25-feature model versioned `v2_bbres_<ts>`).",
-    )
     ap.add_argument("--seed", type=int, default=42, help="LightGBM/Optuna seed.")
-    ap.add_argument(
-        "--strategy",
-        choices=["v2", "v3"],
-        default="v2",
-        help="v2 = 21 features (current). v3 = v2 + 5 Binance microstructure "
-        "features (CVD, taker_ratio, intensity, large_trade, signed_autocorr) "
-        "queried from market_data.crypto_trades.",
-    )
     ap.add_argument(
         "--microstructure-window-s",
         type=int,
@@ -850,22 +837,18 @@ def main() -> int:
         markets,
         sqlite_sources=sqlite_sources,
         candles_5m=candles,
-        include_bb_residual=args.include_bb_residual,
-        include_microstructure=(args.strategy == "v3"),
+        include_bb_residual=False,
+        include_microstructure=True,
         use_real_implied_prob=args.use_real_implied_prob,
         pg_dsn=pg_dsn,
         microstructure_window_s=args.microstructure_window_s,
         large_threshold_usd=args.large_trade_threshold_usd,
     )
     log.info(
-        "feature samples: %d / markets=%d / n_features=%d / strategy=%s / "
-        "include_bb_residual=%s / include_microstructure=%s",
+        "feature samples: %d / markets=%d / n_features=%d (v3 microstructure)",
         len(samples),
         len(markets),
         len(samples[0].features) if samples else 0,
-        args.strategy,
-        args.include_bb_residual,
-        args.strategy == "v3",
     )
     if len(samples) < 100:
         log.error("too few samples after feature build")
@@ -881,32 +864,20 @@ def main() -> int:
     log.info("metrics: %s", json.dumps(trained["metrics"]))
 
     stamp = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
-    feat_names_override: list[str] | None = None
-    if args.strategy == "v3":
-        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
-            feature_names_v3,
-        )
+    from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
+        feature_names_v3,
+    )
 
-        feat_names_override = list(feature_names_v3())
-        if args.use_real_implied_prob:
-            version_tag = f"v3_priceshist_{stamp}"
-        else:
-            version_tag = f"v3_first_{stamp}"
-        model_name = "last_90s_forecaster_v3"
-    elif args.include_bb_residual:
-        version_tag = f"v2_bbres_{stamp}"
-        model_name = "last_90s_forecaster_v2"
-    else:
-        version_tag = None
-        model_name = "last_90s_forecaster_v2"
+    feat_names_override = list(feature_names_v3())
+    version_tag = f"v3_priceshist_{stamp}" if args.use_real_implied_prob else f"v3_first_{stamp}"
     out = write_artefacts(
-        name=model_name,
+        name="last_90s_forecaster_v3",
         trained=trained,
         training_period_from=t_from,
         training_period_to=t_to,
         promote=args.promote,
-        include_bb_residual=args.include_bb_residual,
-        include_microstructure=(args.strategy == "v3"),
+        include_bb_residual=False,
+        include_microstructure=True,
         feature_names_override=feat_names_override,
         version_tag=version_tag,
     )

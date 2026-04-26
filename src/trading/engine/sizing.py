@@ -1,6 +1,6 @@
 """Fractional Kelly stake sizing (ADR 0011).
 
-Used by last_90s_forecaster_v1 / _v2 after the first ``kelly_min_trades``
+Used by last_90s_forecaster_v3 after the first ``kelly_min_trades``
 settled paper trades. Before that, callers stay on a fixed ``stake_usd``
 so we have empirical data to back the probability estimate.
 

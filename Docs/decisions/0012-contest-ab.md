@@ -1,7 +1,10 @@
 # ADR 0012 — Contest A/B: `contest_ensemble_v1` vs `contest_avengers_v1`
 
 Date: 2026-04-23
-Status: Accepted
+Status: SUPERSEDED 2026-04-26 — both arms deleted. contest_ensemble_v1
+ran 1,013 trades for -$260 / Sharpe -0.06; contest_avengers_v1 produced
+zero ENTERs in its evaluated window. cli/contest_ab_weekly.py + the
+contest_ab Grafana dashboard were removed alongside the strategies.
 Scope: Phase 3.7
 
 ## Context

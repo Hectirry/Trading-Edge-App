@@ -25,20 +25,10 @@ paper_ticks_retention_days = 30
 enabled = true
 params_file = "config/strategies/pbt5m_trend_confirm_t1_v1.toml"
 
-[strategies.last_90s_forecaster_v1]
-enabled = true
-params_file = "config/strategies/pbt5m_last_90s_forecaster_v1.toml"
-
-[strategies.last_90s_forecaster_v2]
-# Shadow mode until the training CLI promotes a model row
-# (ADR 0011). The strategy also auto-shadows when no active row exists
-# in research.models, so enabling it here is safe.
-enabled = true
-params_file = "config/strategies/pbt5m_last_90s_forecaster_v2.toml"
-
 [strategies.last_90s_forecaster_v3]
-# v2 + 5 Binance microstructure features. Boots shadow (no v3 model
-# in research.models). Auto-shadow path is the same as v2.
+# v2 base + 5 Binance microstructure features (CVD, taker_ratio,
+# intensity, large_trade, signed_autocorr). Active in paper with
+# explicit gate-bypass per BITACORA 2026-04-25.
 enabled = true
 params_file = "config/strategies/pbt5m_last_90s_forecaster_v3.toml"
 
@@ -49,18 +39,27 @@ params_file = "config/strategies/pbt5m_last_90s_forecaster_v3.toml"
 enabled = true
 params_file = "config/strategies/pbt5m_bb_residual_ofi_v1.toml"
 
-[strategies.contest_ensemble_v1]
-# ADR 0012 — Moondev contest A/B arm A. Boots with the explicit-rules
-# ensemble; upgrades to the LightGBM meta when a model row is promoted.
+[strategies.oracle_lag_v1]
+# ADR 0013/0014 — analytic Φ(δ/σ√τ) on Chainlink-vs-spot residual.
+# 2026-04-26 promoted from shadow to active paper at conservative
+# stake ($2). Phase 0 Binance-only — Phase 1 cesta with live-refresh
+# deferred to v1.1. Revert to shadow if paper trailing 7d PnL ≤ 0
+# or WR < 50 % over ≥ 30 fills.
 enabled = true
-params_file = "config/strategies/contest_ensemble_v1.toml"
+params_file = "config/strategies/pbt5m_oracle_lag_v1.toml"
 
-[strategies.contest_avengers_v1]
-# ADR 0012 — Moondev contest A/B arm B. Hard-threshold confidence
-# gate + oracle-lag + liquidation-gravity signals. Degrades gracefully
-# when Chainlink/Coinalyze keys aren't configured (capped confidence).
+[strategies.oracle_lag_v2]
+# ADR 0014 — maker-first Avellaneda-Stoikov quoting on the same
+# scoring core as v1. Loaded by the engine in `shadow = true` (set
+# in pbt5m_oracle_lag_v2.toml [paper]) — operator gate-bypass on the
+# "≥ 2 weeks v1 paper-shadow" precondition declared 2026-04-26.
+# v2 emits ENTER signals but the cancel+place adapter on top of
+# SimulatedExecutionClient is not wired yet, so shadow stays on
+# until that lands. Flipping shadow=false requires the falsification
+# gate from ADR 0014 § Falsification (PnL/share v2 ≥ v1 + 1.5 ¢ AND
+# maker fill rate ≥ 40 %).
 enabled = true
-params_file = "config/strategies/contest_avengers_v1.toml"
+params_file = "config/strategies/pbt5m_oracle_lag_v2.toml"
 
 [deployment]
 service = "tea-engine"

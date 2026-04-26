@@ -46,9 +46,7 @@ from pathlib import Path
 # duplication. If they ever move, this module breaks loudly at import
 # time (preferable to silent feature drift).
 from trading.cli.train_last90s import (
-    _fetch_microstructure_for_window,
     _fetch_ohlcv_1m_closes,
-    _fetch_polymarket_implied_yes,
     _load_resolved_markets,
     _load_ticks_for_slug,
     _passes_promotion,

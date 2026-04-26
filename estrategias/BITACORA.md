@@ -8,6 +8,20 @@ Formato: `## YYYY-MM-DD — tema corto` + 1-5 líneas.
 
 ---
 
+## 2026-04-26 — limpieza de estrategias muertas
+
+Eliminadas del repo: `last_90s_forecaster_v1`, `last_90s_forecaster_v2`,
+`contest_ensemble_v1`, `contest_avengers_v1`. Decisión del usuario por
+métricas pobres (v1 WR 28.7 %, contest_ensemble PnL -$260, contest_avengers
+0 trades). v2 reemplazada por v3 — mismo trainer, +5 features microstructure.
+Refactor previo: `LGBRunner` extraído de v2 a
+`src/trading/strategies/polymarket_btc5m/_lgb_runner.py` (ahora compartido por
+v3 + bb_residual_ofi_v1). `cli/contest_ab_weekly.py`, dashboard `contest_ab.json`,
+`scripts/grid_search_v1_divisor.py` y los `resultados/*` correspondientes
+borrados. ADR 0012 queda como historial-superseded.
+
+---
+
 ## 2026-04-25 — promoción v3_priceshist a paper (bypass gate, riesgo declarado)
 
 `is_active=true` flippeado en `research.models` para

@@ -11,6 +11,7 @@ from trading.common.logging import configure_logging, get_logger
 from trading.common.metrics import start_metrics_server
 from trading.ingest.binance import BinanceAdapter
 from trading.ingest.bybit import BybitAdapter
+from trading.ingest.coinbase import CoinbaseAdapter
 from trading.ingest.polymarket import PolymarketAdapter
 from trading.ingest.polymarket.slug import SLUG_PREFIX
 
@@ -19,6 +20,8 @@ log = get_logger("cli.ingestor")
 INTERVALS = ["1m", "5m", "15m", "1h", "1d"]
 CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 TRADE_SYMBOLS = ["BTCUSDT", "SOLUSDT"]
+# Coinbase USD-native pairs for ADR 0013 oracle_lag_v1 cesta.
+COINBASE_SYMBOLS = ["BTCUSD"]
 POLYMARKET_DISCOVERY_LOOKBACK = timedelta(days=30)
 
 
@@ -26,6 +29,7 @@ class Supervisor:
     def __init__(self) -> None:
         self.binance = BinanceAdapter()
         self.bybit = BybitAdapter()
+        self.coinbase = CoinbaseAdapter()
         self.polymarket = PolymarketAdapter()
         self._stop = asyncio.Event()
 
@@ -48,6 +52,14 @@ class Supervisor:
             asyncio.create_task(
                 self._guarded("bybit_trades", self.bybit.stream_trades, TRADE_SYMBOLS)
             ),
+            asyncio.create_task(
+                self._guarded(
+                    "coinbase_ohlcv", self.coinbase.stream_ohlcv, COINBASE_SYMBOLS, ["1m"]
+                )
+            ),
+            asyncio.create_task(
+                self._guarded("coinbase_trades", self.coinbase.stream_trades, COINBASE_SYMBOLS)
+            ),
             asyncio.create_task(self._guarded("polymarket_loop", self._polymarket_loop)),
             asyncio.create_task(self._guarded("chainlink_updates", self._chainlink_loop)),
             asyncio.create_task(self._guarded("coinalyze_liquidations", self._coinalyze_loop)),
@@ -62,6 +74,7 @@ class Supervisor:
         await asyncio.gather(
             self.binance.aclose(),
             self.bybit.aclose(),
+            self.coinbase.aclose(),
             self.polymarket.aclose(),
             return_exceptions=True,
         )

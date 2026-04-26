@@ -37,62 +37,34 @@ from trading.paper.tick_recorder import TickRecorder
 log = get_logger("cli.paper_engine")
 
 
-async def _load_hmm_detector():
-    """Return an ``HMMRegimeDetector`` for the active ``hmm_regime_btc5m``
-    row, else ``NullHMMRegimeDetector``. Strategies that don't need an
-    HMM are unaffected.
-    """
-    from pathlib import Path as _Path
-
-    from trading.common.db import acquire
-    from trading.engine.features.hmm_regime import (
-        HMMRegimeDetector,
-        NullHMMRegimeDetector,
-    )
-
-    try:
-        async with acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT path FROM research.models " "WHERE name = $1 AND is_active = TRUE",
-                "hmm_regime_btc5m",
-            )
-    except Exception as e:
-        log.warning("hmm.lookup_err", err=str(e))
-        return NullHMMRegimeDetector()
-    if row is None:
-        log.info("hmm.no_active_row")
-        return NullHMMRegimeDetector()
-    bundle_path = _Path(row["path"]) / "model.pkl"
-    if not bundle_path.exists():
-        log.warning("hmm.bundle_missing", path=str(bundle_path))
-        return NullHMMRegimeDetector()
-    try:
-        return HMMRegimeDetector.load(bundle_path)
-    except Exception as e:
-        log.warning("hmm.load_err", err=str(e))
-        return NullHMMRegimeDetector()
-
-
 async def _shared_providers_refresh_loop(
-    chainlink_provider,
-    liq_provider,
     macro_provider,
     microstructure_provider=None,
+    oracle_lag_cestas: list | None = None,
 ) -> None:
-    """Keep the Chainlink + liquidation + macro + microstructure caches
-    warm. Chainlink TTL short (5 s), liq clusters medium (30 s), macro
-    candles slow (every 5 min), microstructure 5 s (matches loop tick).
+    """Keep shared caches warm.
+
+    - Microstructure: every 5 s (matches the loop tick).
+    - Oracle-lag cestas: every 60 s (Coinbase / OKX / Bybit / Kraken
+      OHLCV is 1m so refresh more often is wasted DB load).
+    - Macro candles: every 5 min.
     """
     import asyncio as _asyncio
+
+    from trading.common.db import acquire
 
     i = 0
     while True:
         try:
-            await chainlink_provider.refresh()
             if microstructure_provider is not None:
                 await microstructure_provider.refresh()
-            if i % 6 == 0:
-                await liq_provider.refresh()
+            if oracle_lag_cestas and i % 12 == 0:
+                async with acquire() as conn:
+                    for cesta in oracle_lag_cestas:
+                        try:
+                            await cesta.refresh(conn)
+                        except Exception as e:
+                            log.warning("oracle_lag.cesta.refresh_err", err=str(e))
             if i % 60 == 0:
                 await macro_provider.refresh(hours=6)
         except Exception as e:
@@ -106,29 +78,24 @@ async def _load_strategy(
     cfg: dict,
     macro_provider=None,
     *,
-    hmm_detector=None,
-    chainlink_provider=None,
-    liq_provider=None,
     microstructure_provider=None,
 ) -> StrategyBase:
     if name == "trend_confirm_t1_v1":
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import TrendConfirmT1V1
 
         return TrendConfirmT1V1(config=cfg)
-    if name == "last_90s_forecaster_v1":
-        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v1 import (
-            Last90sForecasterV1,
-        )
+    if name == "oracle_lag_v1":
+        from trading.cli.backtest import _load_oracle_lag_cesta
+        from trading.strategies.polymarket_btc5m.oracle_lag_v1 import OracleLagV1
 
-        return Last90sForecasterV1(cfg, macro_provider=macro_provider)
-    if name == "last_90s_forecaster_v2":
-        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v2 import (
-            Last90sForecasterV2,
-            load_runner_async,
-        )
+        cesta = await _load_oracle_lag_cesta(cfg)
+        return OracleLagV1(config=cfg, cesta=cesta)
+    if name == "oracle_lag_v2":
+        from trading.cli.backtest import _load_oracle_lag_cesta
+        from trading.strategies.polymarket_btc5m.oracle_lag_v2 import OracleLagV2
 
-        runner = await load_runner_async()
-        return Last90sForecasterV2(cfg, macro_provider=macro_provider, model=runner)
+        cesta = await _load_oracle_lag_cesta(cfg)
+        return OracleLagV2(config=cfg, cesta=cesta)
     if name == "last_90s_forecaster_v3":
         from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
             Last90sForecasterV3,
@@ -154,31 +121,6 @@ async def _load_strategy(
 
         runner = await bb_ofi_load_runner_async()
         return BBResidualOFIV1(cfg, model=runner)
-    if name == "contest_ensemble_v1":
-        from trading.strategies.polymarket_btc5m.contest_ensemble_v1 import (
-            ContestEnsembleV1,
-            load_meta_model_async_factory,
-        )
-
-        meta_model = await load_meta_model_async_factory()()
-        return ContestEnsembleV1(
-            cfg,
-            macro_provider=macro_provider,
-            hmm_detector=hmm_detector,
-            meta_model=meta_model,
-        )
-    if name == "contest_avengers_v1":
-        from trading.strategies.polymarket_btc5m.contest_avengers_v1 import (
-            ContestAvengersV1,
-        )
-
-        return ContestAvengersV1(
-            cfg,
-            macro_provider=macro_provider,
-            hmm_detector=hmm_detector,
-            chainlink_provider=chainlink_provider,
-            liq_provider=liq_provider,
-        )
     raise RuntimeError(f"unknown strategy: {name}")
 
 
@@ -218,13 +160,9 @@ async def main_async() -> None:
     )
     tg = T.TelegramClient()
 
-    # Shared macro provider for last_90s_forecaster_v1/_v2 + contest_*.
+    # Shared macro provider — used by last_90s_forecaster_v3.
     from trading.strategies.polymarket_btc5m._macro_provider import (
         PostgresMacroProvider,
-    )
-    from trading.strategies.polymarket_btc5m._shared_providers import (
-        CachedChainlinkSnapshot,
-        CachedLiqClusters,
     )
 
     macro_provider = PostgresMacroProvider()
@@ -236,15 +174,6 @@ async def main_async() -> None:
         )
     except Exception as e:
         log.warning("paper_engine.macro_provider.refresh_err", err=str(e))
-
-    # Shared providers for contest_avengers_v1 (and future strategies).
-    chainlink_provider = CachedChainlinkSnapshot()
-    liq_provider = CachedLiqClusters()
-    try:
-        await chainlink_provider.refresh()
-        await liq_provider.refresh()
-    except Exception as e:
-        log.warning("paper_engine.shared_providers.refresh_err", err=str(e))
 
     # v3 microstructure cache. Refreshed every 5 s in
     # _shared_providers_refresh_loop. fetch() is sync (called from
@@ -261,13 +190,10 @@ async def main_async() -> None:
     except Exception as e:
         log.warning("paper_engine.microstructure_provider.refresh_err", err=str(e))
 
-    # Try to load the HMM regime detector from the active
-    # research.models row. Returns a NullHMMRegimeDetector if no row
-    # exists — strategies degrade cleanly.
-    hmm_detector = await _load_hmm_detector()
-
-    # Per-strategy drivers.
+    # Per-strategy drivers. Track any cesta providers so the shared
+    # refresh loop can keep their per-venue caches warm.
     drivers: list[PaperDriver] = []
+    oracle_lag_cestas: list = []
     strategies_cfg = staging_cfg.get("strategies", {})
     for name, entry in strategies_cfg.items():
         if not entry.get("enabled"):
@@ -278,11 +204,13 @@ async def main_async() -> None:
             name,
             strategy_cfg,
             macro_provider=macro_provider,
-            hmm_detector=hmm_detector,
-            chainlink_provider=chainlink_provider,
-            liq_provider=liq_provider,
             microstructure_provider=microstructure_provider,
         )
+        if (
+            name in ("oracle_lag_v1", "oracle_lag_v2")
+            and getattr(strategy, "cesta", None) is not None
+        ):
+            oracle_lag_cestas.append(strategy.cesta)
         risk = RiskManager({"risk": strategy_cfg["risk"]})
         fill_params = FillParams(
             fee_k=0.05,
@@ -321,10 +249,9 @@ async def main_async() -> None:
         asyncio.create_task(heartbeat.run(), name="heartbeat"),
         asyncio.create_task(
             _shared_providers_refresh_loop(
-                chainlink_provider,
-                liq_provider,
                 macro_provider,
                 microstructure_provider=microstructure_provider,
+                oracle_lag_cestas=oracle_lag_cestas,
             ),
             name="shared_providers_refresh",
         ),

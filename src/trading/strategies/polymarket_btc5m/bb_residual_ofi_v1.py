@@ -58,14 +58,12 @@ from trading.engine.features.binance_microstructure import (
 from trading.engine.strategy_base import StrategyBase
 from trading.engine.types import Action, Decision, Side, TickContext
 from trading.strategies.polymarket_btc5m._bb_ofi_features import (
-    FEATURE_NAMES,
+    FEATURE_NAMES,  # noqa: F401  -- re-exported for tests / tooling
     BBOFIFeatureInputs,
     build_vector,
     convex_fee,
 )
-from trading.strategies.polymarket_btc5m.last_90s_forecaster_v2 import (
-    LGBRunner,  # reused — same n_features guard as v2/v3
-)
+from trading.strategies.polymarket_btc5m._lgb_runner import LGBRunner
 
 log = get_logger("strategy.bb_residual_ofi_v1")
 
@@ -144,7 +142,6 @@ class EnsembleLGBRunner:
         underlying predictive distribution, not the dispersion of the
         deterministic calibration mapping applied to the mean.
         """
-        import numpy as np
 
         probs = self._member_probs(x)
         mean_raw = float(probs.mean())

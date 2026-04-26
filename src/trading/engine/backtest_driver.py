@@ -104,9 +104,15 @@ def _final_price_of(ticks: list[TickContext]) -> float:
 
 
 def _won_market(open_price: float, final_price: float, side: Side) -> bool:
+    """Polymarket BTC up/down 5m resolution rule: ``close ≥ strike`` → UP
+    (tie resolves UP per official market terms). Sprint A.1 fix —
+    earlier code used strict ``>`` which inverted the tie case (rare in
+    BTC/USD with float64 OHLCV but documented in oracle_lag_v1.md as a
+    paper/live concern given Chainlink price quantization).
+    """
     if open_price <= 0 or final_price <= 0:
         return False
-    went_up = final_price > open_price
+    went_up = final_price >= open_price
     return went_up if side is Side.YES_UP else not went_up
 
 

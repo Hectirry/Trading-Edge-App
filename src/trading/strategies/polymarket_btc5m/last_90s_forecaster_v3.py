@@ -31,13 +31,11 @@ from trading.engine.features.binance_microstructure import (
 )
 from trading.engine.strategy_base import StrategyBase
 from trading.engine.types import Action, Decision, Side, TickContext
+from trading.strategies.polymarket_btc5m._lgb_runner import LGBRunner
 from trading.strategies.polymarket_btc5m._v2_features import (
     V2FeatureInputs,
     build_vector,
     feature_names,
-)
-from trading.strategies.polymarket_btc5m.last_90s_forecaster_v2 import (
-    LGBRunner,  # reused — single source of truth for the n_features guard
 )
 
 log = get_logger("strategy.last_90s_forecaster_v3")

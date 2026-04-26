@@ -315,7 +315,7 @@ class PaperDriver:
         ctx = _tick_from_dict(tick)
         slug = ctx.market_slug
         # Rolling 120-tick buffer (~2 min at 1 Hz) + IndicatorStack per
-        # market. last_90s_forecaster_v1/_v2 need at least 90 samples to
+        # market. last_90s_forecaster_v3 needs at least 90 samples to
         # compute the 90 s momentum; 120 gives headroom for AFML lookbacks.
         indicators = self._indicators.setdefault(slug, IndicatorStack())
         buf = self._recent_ticks.setdefault(slug, [])

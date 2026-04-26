@@ -1,0 +1,124 @@
+# oracle_lag_v2 — maker-first Avellaneda-Stoikov quoting on the
+# BS-digital residual (Sprint D / ADR 0014).
+# See estrategias/en-desarrollo/oracle_lag_v2.md and ADR 0014.
+#
+# Same scoring core as v1 (Φ(δ/σ√τ) on the cesta-corrected P_spot).
+# Different execution policy: post GTC limit on the maker side and
+# capture the 0 % rebate instead of paying the 1.5-3 % taker fee.
+
+name = "oracle_lag_v2"
+description = "Φ(δ/σ√τ) + Avellaneda-Stoikov maker quoting. Sprint D / ADR 0014."
+
+[params]
+# Wider window than v1: maker camps the book for a fill so we can
+# afford to start at T-240s (= t = 60 s) instead of T-15s. Closes at
+# t = 297 s same as v1 (no point quoting in the last 3 s of execution).
+entry_window_start_s = 60.0
+entry_window_end_s = 297.0
+
+# σ EWMA — identical to v1.
+sigma_lookback_s = 90.0
+sigma_min_ticks = 60
+ewma_lambda = 0.94
+
+# EV gate — gross of fee since maker fee = 0. Slightly tighter than v1
+# to filter the much larger candidate set the wider window opens up.
+ev_threshold = 0.005
+
+# Phase 0 fallback when [cesta].enabled = false.
+usdt_basis_phase0 = 1.0
+
+[execution]
+# v2's defining block: how to *quote* once the score says the EV is there.
+# mode = "maker" is the only supported value. ADR 0014 reserves "taker"
+# as the v1-equivalent fallback but the strategy refuses to switch
+# (logs a warning and runs maker-equivalent regardless).
+mode = "maker"
+
+# Floor on |mid - limit| in bps. The Avellaneda-Stoikov half-spread
+# also produces a candidate offset; whichever is wider wins. 50 bps
+# (= 0.005 in probability units) keeps us off the bid by a margin
+# wide enough that incoming taker flow has time to walk into our
+# resting quote without being immediately fronted.
+limit_offset_bps = 50.0
+
+# Avellaneda-Stoikov inventory aversion. v2 runs flat (one trade per
+# market) so γ only matters for the asymptotic spread term; default
+# 0.1 from the original A-S 2008 paper.
+gamma_inventory = 0.1
+
+# Order arrival rate parameter k. Polymarket BTC up/down 5 m books
+# turn over slowly outside the last ~30 s; k = 5 is the quiet-market
+# reference. If v2 ships and we observe high flow we bump this and
+# spreads tighten automatically.
+k_order_arrival = 5.0
+
+# If the live EV at the current limit drops by ≥ this many bps below
+# the EV at quote-time, cancel the resting quote even before the
+# requote-on-price-drift fires. 30 bps = 0.003 in probability units.
+cancel_threshold_drop_bps = 30.0
+
+# Polymarket allows 3,000 cancels / 10 s per account. With this floor
+# v2 never issues more than 1 cancel per 2 s per market — at the
+# absolute worst that's ≤ 30 cancels / 60 s per strategy, which is
+# 1 % of the budget.
+cancel_min_interval_s = 2.0
+
+max_active_quotes_per_market = 1
+
+[cesta]
+# Same 5-venue cesta as v1. Re-loaded by `_load_oracle_lag_cesta` in
+# the dispatcher (the same helper v1 uses, no duplication).
+enabled = true
+weight_binance = 0.40
+weight_bybit = 0.10
+weight_coinbase = 0.25
+weight_okx = 0.15
+weight_kraken = 0.10
+
+[sizing]
+# Same conservative first-deploy stake as v1. Once paper validates
+# the maker-fill rate, lift toward the kelly cap.
+stake_usd = 2.0
+kelly_fraction = 0.25
+kelly_min_trades = 20
+kelly_max_stake_usd = 6.0
+
+[backtest]
+# Wider entry window than v1; matches [params].entry_window_*.
+earliest_entry_t_s = 60
+latest_entry_t_s = 297
+window_seconds = 300
+decision_interval_s = 1
+
+[fill_model]
+slippage_bps = 0.0
+fill_probability = 1.0
+# v2 NEVER applies a fee in backtest. The whole point of v2 is to
+# capture the maker rebate (= 0 fee). Hardcoded false per ADR 0014 §3.
+apply_fee_in_backtest = false
+fee_k = 0.0
+
+[risk]
+bypass_in_backtest = true
+cooldown_seconds = 30
+max_position_size_usd = 15.0
+daily_loss_limit_usd = 50.0
+daily_trade_limit = 999999
+min_edge_bps = 0
+min_z_score = 0.0
+min_pm_depth_usd = 15.0
+skip_if_spread_bps = 500
+loss_pause_threshold_usd = 5.0
+loss_pause_window_minutes = 30
+loss_pause_duration_minutes = 30
+
+[paper]
+capital_usd = 1000.0
+daily_loss_alert_pct = 0.03
+daily_loss_pause_pct = 0.05
+# v2 ships in shadow. ADR 0014 § "Falsification" defines the gate to
+# flip this: realized PnL/share v2 ≥ realized PnL/share v1 + 1.5 ¢
+# AND maker fill rate ≥ 40 %, both measured on the same paper_ticks
+# window. Operator decision per ADR 0011.
+shadow = true

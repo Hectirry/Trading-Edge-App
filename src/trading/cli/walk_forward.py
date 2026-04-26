@@ -2,12 +2,11 @@
 
 One entry point for every strategy. Two execution paths:
 
-- **Rules-based** (``trend_confirm_t1_v1``, ``last_90s_forecaster_v1``,
-  ``contest_avengers_v1``) runs the Phase-2 ``run_walk_forward`` replay
-  infrastructure over polybot SQLite dumps — deterministic trade replay,
-  PnL + verdict per fold.
-- **ML-based** (``hmm_regime_btc5m``, ``last_90s_forecaster_v2``,
-  ``contest_ensemble_v1``) refits the model on each IS window and
+- **Rules-based** (``trend_confirm_t1_v1``) runs the Phase-2
+  ``run_walk_forward`` replay infrastructure over polybot SQLite dumps —
+  deterministic trade replay, PnL + verdict per fold.
+- **ML-based** (``hmm_regime_btc5m``, ``last_90s_forecaster_v3``,
+  ``bb_residual_ofi_v1``) refits the model on each IS window and
   evaluates AUC / Brier on the OOS window via the new
   ``trading.research.walk_forward`` core.
 
@@ -22,7 +21,7 @@ Usage::
 
     # ML — rolling retrain
     docker compose exec tea-engine python -m trading.cli.walk_forward \\
-        --strategy last_90s_forecaster_v2 \\
+        --strategy last_90s_forecaster_v3 \\
         --from 2026-03-01 --to 2026-04-20
 
     # Rules — replay
@@ -56,16 +55,12 @@ log = get_logger("cli.walk_forward")
 
 ML_STRATEGIES = {
     "hmm_regime_btc5m",
-    "last_90s_forecaster_v2",
     "last_90s_forecaster_v3",
-    "contest_ensemble_v1",
     "bb_residual_ofi_v1",
 }
 
 RULE_STRATEGIES = {
     "trend_confirm_t1_v1",
-    "last_90s_forecaster_v1",
-    "contest_avengers_v1",
 }
 
 
@@ -86,18 +81,11 @@ def _parse_ts(s: str) -> datetime:
 # ---------------------------------------------------------- ML strategies
 
 
-async def _evaluate_fold_ml(
-    strategy: str, fold: FoldWindow, *, include_bb_residual: bool = False
-) -> dict:
+async def _evaluate_fold_ml(strategy: str, fold: FoldWindow) -> dict:
     if strategy == "hmm_regime_btc5m":
         return await _eval_hmm_fold(fold)
-    if strategy == "last_90s_forecaster_v2":
-        return await _eval_last_90s_v2_fold(fold, include_bb_residual=include_bb_residual)
     if strategy == "last_90s_forecaster_v3":
         return await _eval_last_90s_v3_fold(fold)
-    if strategy == "contest_ensemble_v1":
-        # Same dataset + feature builder as v2 (ADR 0012, BiLSTM deferred).
-        return await _eval_last_90s_v2_fold(fold, include_bb_residual=include_bb_residual)
     if strategy == "bb_residual_ofi_v1":
         return await _eval_bb_ofi_ensemble_fold(fold)
     raise RuntimeError(f"no ML trainer for {strategy}")
@@ -183,99 +171,6 @@ async def _eval_hmm_fold(fold: FoldWindow) -> dict:
     }
 
 
-async def _eval_last_90s_v2_fold(fold: FoldWindow, *, include_bb_residual: bool = False) -> dict:
-    from pathlib import Path as _Path
-
-    from trading.cli.train_last90s import (
-        _load_ohlcv_5m,
-        _load_resolved_markets,
-        build_samples,
-        train,
-    )
-
-    polybot_agent = "/btc-tendencia-data/polybot-agent.db"
-    if not _Path(polybot_agent).exists():
-        return _unvalidated_fold(fold, note="polybot-agent sqlite missing")
-    from trading.engine.data_loader import warn_if_polybot_stale
-
-    warn_if_polybot_stale(polybot_agent, expected_window_end_ts=fold.oos_to.timestamp())
-
-    # Labels re-derived from Binance OHLCV 1m (audit 2026-04-25). pg_dsn
-    # required by the new signature; markets without OHLCV at either end
-    # are dropped, never fallback-resolved against polybot chainlink.
-    markets = _load_resolved_markets(
-        _Path(polybot_agent), slug_encodes_open_ts=True, pg_dsn=_pg_dsn()
-    )
-    for m in markets:
-        m["_source"] = polybot_agent
-
-    def _in(m, a, b):
-        return a.timestamp() <= float(m["close_ts"]) <= b.timestamp()
-
-    is_markets = [m for m in markets if _in(m, fold.is_from, fold.is_to)]
-    oos_markets = [m for m in markets if _in(m, fold.oos_from, fold.oos_to)]
-    if len(is_markets) < 50 or len(oos_markets) < 10:
-        return _unvalidated_fold(
-            fold,
-            n_trades_oos=len(oos_markets),
-            note=f"is={len(is_markets)} oos={len(oos_markets)}",
-        )
-
-    candles = _load_ohlcv_5m(
-        _pg_dsn(),
-        int(fold.is_from.timestamp()) - 3600,
-        int(fold.oos_to.timestamp()) + 3600,
-    )
-    is_samples = build_samples(
-        is_markets,
-        sqlite_sources=[_Path(polybot_agent)],
-        candles_5m=candles,
-        include_bb_residual=include_bb_residual,
-    )
-    oos_samples = build_samples(
-        oos_markets,
-        sqlite_sources=[_Path(polybot_agent)],
-        candles_5m=candles,
-        include_bb_residual=include_bb_residual,
-    )
-    if len(is_samples) < 40 or len(oos_samples) < 10:
-        return _unvalidated_fold(
-            fold,
-            n_trades_oos=len(oos_samples),
-            note="post-feature-build insufficient",
-        )
-
-    trained = train(is_samples, optuna_trials=40, time_budget_s=120)
-
-    import numpy as np
-    from sklearn.metrics import brier_score_loss, roc_auc_score
-
-    X_oos = np.asarray([s.features for s in oos_samples], dtype=np.float64)
-    y_oos = np.asarray([s.label for s in oos_samples], dtype=np.int32)
-    probs = trained["model"].predict(X_oos)
-    auc_oos = float(roc_auc_score(y_oos, probs)) if len(set(y_oos)) == 2 else None
-    brier_oos = float(brier_score_loss(y_oos, probs))
-    auc_is = trained["metrics"].get("test_auc")
-    verdict = classify_fold(
-        auc_is=auc_is,
-        auc_oos=auc_oos,
-        n_trades_oos=len(oos_samples),
-    )
-    return {
-        "fold": fold.idx,
-        "is_from": fold.is_from.isoformat(),
-        "is_to": fold.is_to.isoformat(),
-        "oos_from": fold.oos_from.isoformat(),
-        "oos_to": fold.oos_to.isoformat(),
-        "auc_is": auc_is,
-        "auc_oos": auc_oos,
-        "brier_oos": brier_oos,
-        "n_trades_oos": len(oos_samples),
-        "pnl_oos": None,
-        "verdict": verdict,
-    }
-
-
 async def _eval_last_90s_v3_fold(fold: FoldWindow) -> dict:
     """Walk-forward fold for v3_priceshist: 26 features = v2 base (21) +
     5 Binance microstructure (CVD, taker_ratio, intensity, large, signed
@@ -304,9 +199,7 @@ async def _eval_last_90s_v3_fold(fold: FoldWindow) -> dict:
     warn_if_polybot_stale(polybot_agent, expected_window_end_ts=fold.oos_to.timestamp())
 
     pg_dsn = _pg_dsn()
-    markets = _load_resolved_markets(
-        _Path(polybot_agent), slug_encodes_open_ts=True, pg_dsn=pg_dsn
-    )
+    markets = _load_resolved_markets(_Path(polybot_agent), slug_encodes_open_ts=True, pg_dsn=pg_dsn)
     for m in markets:
         m["_source"] = polybot_agent
 
@@ -467,15 +360,11 @@ async def _eval_bb_ofi_ensemble_fold(fold: FoldWindow) -> dict:
 
     X_oos = np.asarray([s.features for s in oos_samples], dtype=np.float64)
     y_oos = np.asarray([s.label for s in oos_samples], dtype=np.int32)
-    member_probs = np.asarray(
-        [b.predict(X_oos) for b, _p, _n in trained["members"]]
-    )
+    member_probs = np.asarray([b.predict(X_oos) for b, _p, _n in trained["members"]])
     oos_mean_raw = member_probs.mean(axis=0)
     oos_calibrated = trained["calibrator"].predict(oos_mean_raw)
 
-    auc_oos = (
-        float(roc_auc_score(y_oos, oos_calibrated)) if len(set(y_oos)) == 2 else None
-    )
+    auc_oos = float(roc_auc_score(y_oos, oos_calibrated)) if len(set(y_oos)) == 2 else None
     brier_oos = float(brier_score_loss(y_oos, oos_calibrated))
     auc_is = trained["metrics"].get("test_auc")
     verdict = classify_fold(
@@ -594,18 +483,6 @@ def _rules_factory(strategy: str, cfg: dict):
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import TrendConfirmT1V1
 
         return lambda: TrendConfirmT1V1(config=cfg)
-    if strategy == "last_90s_forecaster_v1":
-        from trading.strategies.polymarket_btc5m.last_90s_forecaster_v1 import (
-            Last90sForecasterV1,
-        )
-
-        return lambda: Last90sForecasterV1(config=cfg)
-    if strategy == "contest_avengers_v1":
-        from trading.strategies.polymarket_btc5m.contest_avengers_v1 import (
-            ContestAvengersV1,
-        )
-
-        return lambda: ContestAvengersV1(cfg)
     raise RuntimeError(f"no rules factory for {strategy}")
 
 
@@ -707,11 +584,7 @@ async def main_async(args: argparse.Namespace) -> int:
         )
         try:
             if strategy in ML_STRATEGIES:
-                result = await _evaluate_fold_ml(
-                    strategy,
-                    fold,
-                    include_bb_residual=getattr(args, "include_bb_residual", False),
-                )
+                result = await _evaluate_fold_ml(strategy, fold)
             else:
                 result = _replay_rules_fold(args, strategy, fold)
         except Exception as e:
@@ -766,12 +639,6 @@ def main() -> int:
     ap.add_argument("--slug-encodes-open-ts", action="store_true")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--tolerance", type=float, default=0.30)
-    ap.add_argument(
-        "--include-bb-residual",
-        action="store_true",
-        help="Use the 25-feature vector (bb_residual at tail) when "
-        "evaluating last_90s_forecaster_v2 folds. Default false.",
-    )
     args = ap.parse_args()
     return asyncio.run(main_async(args))
 
