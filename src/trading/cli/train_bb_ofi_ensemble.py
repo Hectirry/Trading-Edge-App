@@ -162,7 +162,9 @@ def _train_ensemble(
     """Train an N-member bagging ensemble. Splits 70/15/15 train/val/test
     using the original sample order (chronological — same convention as
     ``train_last90s.train``). Each member sees a bootstrap resample of
-    train+val (with replacement, n=len(train+val)); the test set is fixed.
+    *train only* (with replacement, n=n_train); val + test stay fixed
+    across members. The test set is fixed for cross-member comparison;
+    val stays out of the bootstrap so early-stopping is honest.
 
     Returns dict with: ``members`` (list of (booster, best_params,
     n_iter)), ``calibrator`` (isotonic on ensemble val-mean), ``metrics``
@@ -178,13 +180,12 @@ def _train_ensemble(
     n = len(samples)
     n_train = int(n * 0.70)
     n_val = int(n * 0.15)
-    X_train_val = X[: n_train + n_val]
-    y_train_val = y[: n_train + n_val]
+    X_train = X[:n_train]
+    y_train = y[:n_train]
     X_val = X[n_train : n_train + n_val]
     y_val = y[n_train : n_train + n_val]
     X_test = X[n_train + n_val :]
     y_test = y[n_train + n_val :]
-    n_tv = len(X_train_val)
 
     rng = np.random.default_rng(base_seed)
     members = []
@@ -192,13 +193,16 @@ def _train_ensemble(
     test_preds = []  # n_members x n_test
 
     for i in range(n_members):
-        # Bootstrap resample of train+val (with replacement). The val set
-        # used for early stopping is still the chronological tail of
-        # train+val (not resampled) — we want early-stopping signal on a
-        # contiguous holdout, not on a random subset that may overfit.
-        boot_idx = rng.integers(0, n_tv, size=n_tv)
-        X_boot = X_train_val[boot_idx]
-        y_boot = y_train_val[boot_idx]
+        # Bootstrap resample of TRAIN only (n=n_train, with replacement).
+        # Val is held out — never enters the bootstrap — so the early-
+        # stopping signal d_val inside _train_member is genuinely OOS
+        # for every member. Sampling val into the boot would let early
+        # stopping overfit on data the model already saw, producing
+        # wildly miscalibrated predictions (the 2026-04-26 first run
+        # showed AUC 0.50 / ECE_test 0.47 from exactly this leak).
+        boot_idx = rng.integers(0, n_train, size=n_train)
+        X_boot = X_train[boot_idx]
+        y_boot = y_train[boot_idx]
 
         seed_i = base_seed + i * 17
         log.info(
@@ -207,7 +211,7 @@ def _train_ensemble(
             n_members,
             seed_i,
             len(set(boot_idx.tolist())),
-            n_tv,
+            n_train,
         )
         booster, best_params, n_iter = _train_member(
             X_train_val=X_boot,
