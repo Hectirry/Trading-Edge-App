@@ -32,7 +32,21 @@ REDIS_CHANNEL = "tea:paper_ticks"
 WINDOW_OPEN_LEAD_S = 2.0
 
 
-def _is_in_publishing_window(window_close_ts: float, now: float) -> bool:
+def _window_seconds_for_slug(slug: str) -> int:
+    """Horizon-aware window length, derived from slug prefix.
+
+    Without this, the recorder hardcoded 300s (5m) and silently dropped
+    the first 10 minutes of every 15m market, causing mm_rebate_v1_*15m
+    instances to only see late-stage ticks where the [0.25, 0.50) active
+    zone almost never applies (price has resolved toward 0 or 1).
+    """
+    if "-15m-" in slug:
+        return 900
+    # Default to 5m for the existing direction-style strategies.
+    return 300
+
+
+def _is_in_publishing_window(window_close_ts: float, now: float, slug: str = "") -> bool:
     """True iff `now` is in [window_open - WINDOW_OPEN_LEAD_S, window_close).
 
     Without this gate, ``feeds._refresh_once`` seeds ~100 upcoming
@@ -40,7 +54,8 @@ def _is_in_publishing_window(window_close_ts: float, now: float) -> bool:
     ``t_in_window=0`` tick for every one of them every ~1 s, bloating
     Redis and `paper_ticks` with rows that no strategy ever evaluates.
     """
-    window_open = window_close_ts - 300.0
+    window_seconds = _window_seconds_for_slug(slug)
+    window_open = window_close_ts - window_seconds
     return (window_open - WINDOW_OPEN_LEAD_S) <= now < window_close_ts
 
 
@@ -70,7 +85,7 @@ class TickRecorder:
                 open_markets = [
                     m
                     for m in self.state.markets.values()
-                    if _is_in_publishing_window(m.window_close_ts, now)
+                    if _is_in_publishing_window(m.window_close_ts, now, m.slug)
                 ]
                 feed_snapshot = {
                     "spot": self.state.spot_price,
@@ -92,7 +107,8 @@ class TickRecorder:
                 # Chainlink reading — that creates a false "open" that
                 # flips went_up in the settle watchdog. Leave open_price
                 # at 0 and let the watchdog's ohlcv fallback handle it.
-                window_open = m.window_close_ts - 300
+                window_seconds = _window_seconds_for_slug(m.slug)
+                window_open = m.window_close_ts - window_seconds
                 t_in_win = max(0.0, now - window_open)
                 if not m.open_price_captured and now >= window_open and t_in_win <= 5.0:
                     # Prefer spot (continuous Binance 1Hz) for the open
@@ -102,7 +118,7 @@ class TickRecorder:
                     m.open_price_captured = True
 
                 t_in_window = max(0.0, now - window_open)
-                if t_in_window > 300:
+                if t_in_window > window_seconds:
                     continue
                 derived = compute_derived_book(book)
                 tick = {
