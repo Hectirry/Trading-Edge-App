@@ -6,17 +6,24 @@ name = "mm_rebate_v1"
 description = "MM neutral en BTC-updown 15m, zona [0.15, 0.40]. Paper soak agresivo."
 
 [params]
-# Active price zone (parametrizable; if Step 0 v2 changes the bucket nominee,
-# this is a config edit, not a code edit).
-zone_lo            = 0.15
-zone_hi            = 0.40
-dead_zone_lo       = 0.40
-dead_zone_hi       = 0.60
+# Multi-instance identity: name + slug_pattern. With 4 instances of
+# MMRebateV1, each TOML gets a distinct name + slug filter.
+instance_name      = "mm_rebate_v1_btc15m"
+slug_pattern       = "btc-updown-15m-"
+
+# Active price zone — RELAXED from [0.15, 0.40] to [0.25, 0.50) per Step 2
+# observation that 99% of 15m market lifetime is spent in [0.40, 0.60].
+# Edge of dead zone has liquidity but also informed-bot competition; that
+# competition is exactly what the aggressive paper soak measures.
+zone_lo            = 0.25
+zone_hi            = 0.50
+dead_zone_lo       = 0.50      # raised from 0.40 to give zone_hi headroom
+dead_zone_hi       = 0.55
 
 # Time window inside each 15-min market.
 window_seconds         = 900
 entry_window_start_s   = 60     # quote starting at t=60s
-tau_terminal_s         = 30     # paper-aggressive: stop quoting last 30s (vs 60s conservador)
+tau_terminal_s         = 30     # paper-aggressive: stop quoting last 30s
 
 # AS optimal-spread params.
 gamma_inventory_risk   = 0.5

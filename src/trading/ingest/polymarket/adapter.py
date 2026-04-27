@@ -27,26 +27,44 @@ log = get_logger(__name__)
 
 CLOB_REST = "https://clob.polymarket.com"
 
-# Gamma series_id for "BTC Up or Down 5m". Hardcoded: this is a stable identifier
-# and is the only discovery key that lets us enumerate historical 5m markets
-# (individual `?slug=` lookups drop archived markets after minutes).
+# Gamma series_ids for the asset×5m families. Hardcoded — these are stable
+# identifiers and are the only discovery key that lets us enumerate historical
+# 5m markets (individual `?slug=` lookups drop archived markets after minutes).
 BTC_UPDOWN_5M_SERIES_ID = 10684
+ETH_UPDOWN_5M_SERIES_ID = 10683
 GAMMA_EVENTS_PAGE_SIZE = 500
 
 # Supported slug-pattern prefixes for `discover_markets`.
-# 5m has a numeric `series_id` so enumeration is dense (every event in the
-# series is a 5m market). 15m has `seriesSlug='btc-up-or-down-15m'` only —
-# Gamma honors no server-side filter for it, so /events must be paginated
-# in default ordering and slug-prefix-filtered client-side. This is much
-# less efficient (~13 hits per 500 events) and bounded by /events ordering
-# depth; historical coverage > ~7 days requires more than the safety cap
-# of pages this adapter will scan. Pre-2026-04-28 there is NO 15m coverage
-# in TEA — consumers must check `research.market_manifest_btc15m` before
-# assuming N days of history.
+#
+# 5m families have numeric `series_id`s (dense enumeration: every event in the
+# series is a market of that family).
+#
+# 15m families have `seriesSlug='<asset>-up-or-down-15m'` only — Gamma honors
+# no server-side filter for that, so /events must be paginated in default
+# ordering and slug-prefix-filtered client-side. ~13 hits per 500 events.
+# Pre-2026-04-28 there is NO 15m coverage in TEA — consumers must check
+# `research.market_manifest_polymarket` before assuming N days of history.
 SLUG_PREFIX_5M = "btc-updown-5m-"
 SLUG_PREFIX_15M = "btc-updown-15m-"
-SUPPORTED_SLUG_PATTERNS = (SLUG_PREFIX_5M, SLUG_PREFIX_15M)
-GLOBAL_EVENTS_SAFETY_PAGE_CAP = 60  # ≈ 30k events scanned worst-case for 15m
+SLUG_PREFIX_BTC_5M = SLUG_PREFIX_5M  # alias kept for backward compat
+SLUG_PREFIX_BTC_15M = SLUG_PREFIX_15M  # alias
+SLUG_PREFIX_ETH_5M = "eth-updown-5m-"
+SLUG_PREFIX_ETH_15M = "eth-updown-15m-"
+
+# Map slug prefix → numeric series_id for the dense (5m) path.
+# 15m families are absent here on purpose — they take the global-pagination path.
+SERIES_ID_BY_PREFIX: dict[str, int] = {
+    SLUG_PREFIX_BTC_5M: BTC_UPDOWN_5M_SERIES_ID,
+    SLUG_PREFIX_ETH_5M: ETH_UPDOWN_5M_SERIES_ID,
+}
+
+SUPPORTED_SLUG_PATTERNS = (
+    SLUG_PREFIX_BTC_5M,
+    SLUG_PREFIX_BTC_15M,
+    SLUG_PREFIX_ETH_5M,
+    SLUG_PREFIX_ETH_15M,
+)
+GLOBAL_EVENTS_SAFETY_PAGE_CAP = 60  # ≈ 30k events scanned worst-case
 
 
 class PolymarketAdapter(PolymarketIngestAdapter):
@@ -121,18 +139,27 @@ class PolymarketAdapter(PolymarketIngestAdapter):
         """
         if slug_pattern not in SUPPORTED_SLUG_PATTERNS:
             raise ValueError(f"unsupported slug_pattern: {slug_pattern!r}")
-        if slug_pattern == SLUG_PREFIX_5M:
+        # 5m families route via series_id (dense, fast). 15m families have no
+        # numeric series_id and must paginate global /events.
+        if slug_pattern in SERIES_ID_BY_PREFIX:
             return await self._discover_via_series(slug_pattern, since)
         return await self._discover_via_global_events(slug_pattern, since)
 
     async def _discover_via_series(self, slug_pattern: str, since: datetime) -> int:
-        """5m path — paginate /events?series_id=10684 (dense, fast)."""
+        """5m path — paginate /events?series_id=<X> (dense, fast).
+
+        Looks up the numeric series_id from SERIES_ID_BY_PREFIX. Each 5m
+        family (BTC, ETH, future) has its own series_id.
+        """
+        series_id = SERIES_ID_BY_PREFIX.get(slug_pattern)
+        if series_id is None:
+            raise ValueError(f"no series_id mapped for slug_pattern={slug_pattern!r}")
         total = 0
         offset = 0
         since_epoch = int(since.astimezone(UTC).timestamp())
         reached_since = False
         while not reached_since:
-            events = await self._fetch_events_page(offset)
+            events = await self._fetch_events_page(offset, series_id=series_id)
             if not events:
                 break
             rows: list[tuple] = []
@@ -248,13 +275,18 @@ class PolymarketAdapter(PolymarketIngestAdapter):
         wait=wait_exponential(multiplier=1, min=1, max=16),
         retry=retry_if_exception_type((IngestRateLimitError, IngestSourceDown)),
     )
-    async def _fetch_events_page(self, offset: int) -> list[dict]:
+    async def _fetch_events_page(
+        self, offset: int, series_id: int = BTC_UPDOWN_5M_SERIES_ID
+    ) -> list[dict]:
+        """Generalized: caller passes the series_id. Default = BTC-5m for
+        backward compat with any caller that still passes a single offset.
+        """
         async with self.rate_limiter:
             try:
                 r = await self._gamma.get(
                     "/events",
                     params={
-                        "series_id": BTC_UPDOWN_5M_SERIES_ID,
+                        "series_id": series_id,
                         "order": "endDate",
                         "ascending": "false",
                         "limit": GAMMA_EVENTS_PAGE_SIZE,

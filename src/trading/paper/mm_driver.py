@@ -36,6 +36,7 @@ from trading.common.logging import get_logger
 from trading.engine.mm_actions import CancelQuote, MMAction, PostQuote, ReplaceQuote
 from trading.engine.types import Side
 from trading.paper.driver import PaperDriver, _tick_from_dict
+from trading.paper.global_mm_state import GlobalMMState
 from trading.paper.limit_book_sim import LimitBookSim, LimitOrder
 
 log = get_logger(__name__)
@@ -52,9 +53,16 @@ def _side_to_book_side(side: Side) -> str:
 
 
 class MMPaperDriver(PaperDriver):
-    def __init__(self, *args, limit_book: LimitBookSim, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        limit_book: LimitBookSim,
+        global_mm_state: GlobalMMState | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.limit_book = limit_book
+        self.global_state = global_mm_state or GlobalMMState()
 
     async def _handle_tick(self, tick: dict) -> None:
         # Reuse parent setup for buffer + heartbeat + pause gate, then
@@ -131,6 +139,25 @@ class MMPaperDriver(PaperDriver):
     ) -> None:
         instrument_id = _instrument_id_yes(slug)
         if isinstance(action, PostQuote):
+            # Global pre-flight: would this quote breach the aggregate
+            # caps in [paper.global_caps]? If yes, drop and log.
+            delta_inv = float(action.qty_shares) * float(action.price)
+            delta_cap = delta_inv  # capital_at_risk ≈ notional for limit orders
+            blocked, reason = await self.global_state.block_post_quote(
+                strategy_id=self.strategy.name,
+                delta_inventory_usdc=delta_inv,
+                delta_capital_at_risk_usd=delta_cap,
+            )
+            if blocked:
+                log.info(
+                    "mm_global_cap_drop",
+                    strategy=self.strategy.name,
+                    slug=slug,
+                    side=action.side.value,
+                    reason=reason,
+                )
+                self._bump_counter("mm_global_cap_drop")
+                return
             order = LimitOrder(
                 coid=self._coid_for_post(slug, ctx.ts, action),
                 strategy_id=self.strategy.name,

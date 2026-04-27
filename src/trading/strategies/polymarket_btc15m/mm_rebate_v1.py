@@ -83,17 +83,31 @@ def _coid(strategy: str, slug: str, ts: float, side: Side, seed: str) -> str:
 
 
 class MMRebateV1(StrategyBase):
-    name = "mm_rebate_v1"
+    """MM strategy class. Multi-instance: each TOML config defines a
+    distinct `name` (e.g. mm_rebate_v1_btc15m, mm_rebate_v1_eth5m) and
+    `slug_pattern` so the same class can serve 4 asset×horizon instances
+    without collisions in client_order_id, trading.fills.strategy_id, or
+    paper-driver registry.
+    """
 
     BUCKET_EDGES: list[tuple[float, float, str]] = [
         (0.15, 0.20, "0.15-0.20"),
         (0.20, 0.30, "0.20-0.30"),
         (0.30, 0.40, "0.30-0.40"),
+        (0.40, 0.50, "0.40-0.50"),
     ]
 
     def __init__(self, config: dict, k_estimator: KEstimator | None = None) -> None:
         super().__init__(config)
         p = self.params
+
+        # Multi-instance name + tick filter (NEW for the 4-asset expansion).
+        # Default name = mm_rebate_v1 (V1 single-instance; tests reference this).
+        self.name = str(p.get("instance_name", "mm_rebate_v1"))
+        # slug_pattern filters incoming ticks. The driver subscribes to all
+        # tokens; each strategy instance ignores ticks from markets outside
+        # its asset family. If unset, accept everything (back-compat).
+        self.slug_pattern: str | None = p.get("slug_pattern")
 
         self.zone_lo = float(p.get("zone_lo", 0.15))
         self.zone_hi = float(p.get("zone_hi", 0.40))
@@ -139,6 +153,12 @@ class MMRebateV1(StrategyBase):
     def on_tick(self, ctx: TickContext) -> list[MMAction]:
         actions: list[MMAction] = []
         slug = ctx.market_slug
+
+        # Stage 0: slug-pattern filter. With 4 instances all subscribed to
+        # the same Redis tick stream, each instance ignores ticks for
+        # markets outside its asset×horizon family.
+        if self.slug_pattern is not None and not slug.startswith(self.slug_pattern):
+            return []
 
         # Stage 1: zone gates
         p_fair = self._compute_p_fair(ctx)

@@ -41,17 +41,32 @@ params_file = "config/strategies/pbt5m_last_90s_forecaster_v3.toml"
 enabled = true
 params_file = "config/strategies/pbt5m_oracle_lag_v1.toml"
 
-[strategies.mm_rebate_v1]
-# Step 2 — first MM-style strategy on Polymarket BTC-updown 15m. Direct
-# paper deploy without shadow per operator decision (aggressive paper
-# soak). Caps: $50 inventory, $500 capital_at_risk, 10 markets concurrent,
-# $20 stake. NO daily auto-pause on PnL drawdown — operator wants the
-# full drawdown signal. MMSafetyGuard alerts but does not auto-kill in
-# paper. Active zone [0.15, 0.40]; above-zona and dead zone hard skip.
-# Decision at 7 days: scale 2× if Sharpe daily > 0.5 + adverse < Step 0
-# projection; else stop, analyze, decide.
+[strategies.mm_rebate_v1_btc15m]
+# Step 2 expansion — MM strategy, 4 instances across BTC/ETH × 5m/15m.
+# Aggressive paper soak; zone relaxed to [0.25, 0.50) per Step 2 finding
+# (99% of 15m market lifetime in dead zone). Above-zone (>0.50) hard skip.
 enabled = true
 params_file = "config/strategies/polymarket_btc15m_mm_rebate_v1.toml"
+
+[strategies.mm_rebate_v1_btc5m]
+enabled = true
+params_file = "config/strategies/polymarket_btc5m_mm_rebate_v1.toml"
+
+[strategies.mm_rebate_v1_eth15m]
+enabled = true
+params_file = "config/strategies/polymarket_eth15m_mm_rebate_v1.toml"
+
+[strategies.mm_rebate_v1_eth5m]
+enabled = true
+params_file = "config/strategies/polymarket_eth5m_mm_rebate_v1.toml"
+
+[paper.global_caps]
+# Aggregate across all MM strategy instances (NOT applied to direction-style
+# strategies). Pre-flight in MMPaperDriver._dispatch_action: a PostQuote that
+# would breach either cap is dropped (logged as drop_global_cap).
+# 4 × $500 = $2000 nominal exposure with $500 headroom for safety.
+max_total_capital_at_risk_usd            = 2500.0
+max_total_inventory_usdc_across_strategies = 250.0
 
 [deployment]
 service = "tea-engine"

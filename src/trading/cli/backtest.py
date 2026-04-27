@@ -150,6 +150,12 @@ async def _load_strategy(name: str, config: dict, macro_provider):
         )
 
         return TrendConfirmT1V1(config=config)
+    if name == "polymarket_btc5m/trend_confirm_t1_v2":
+        from trading.strategies.polymarket_btc5m.trend_confirm_t1_v2 import (
+            TrendConfirmT1V2,
+        )
+
+        return TrendConfirmT1V2(config=config)
     if name == "polymarket_btc5m/oracle_lag_v1":
         from trading.strategies.polymarket_btc5m.oracle_lag_v1 import OracleLagV1
 
@@ -165,12 +171,14 @@ async def _load_strategy(name: str, config: dict, macro_provider):
 
         runner = await v3_load_runner_async()
         return Last90sForecasterV3(config, macro_provider=macro_provider, model=runner)
-    if name == "polymarket_btc15m/mm_rebate_v1":
-        # Step 2 — first 15m strategy. Direct paper deploy without shadow per
-        # operator decision; backtest path here is best-effort (the existing
-        # backtest_driver does not yet wire limit_book_sim, so backtest of an
-        # MM strategy is degraded compared to paper). Owed: backtest driver
-        # extension for on_tick + limit_book_sim. Tracked in Step 0 v2.
+    if name in (
+        "polymarket_btc15m/mm_rebate_v1",
+        "polymarket_btc5m/mm_rebate_v1",
+        "polymarket_eth15m/mm_rebate_v1",
+        "polymarket_eth5m/mm_rebate_v1",
+    ):
+        # 4 MM instances using the same class. Backtest path is best-effort
+        # (limit_book_sim not yet wired into backtest_driver — owed Step 3).
         from trading.strategies.polymarket_btc15m.mm_rebate_v1 import MMRebateV1
 
         return MMRebateV1(config=config)

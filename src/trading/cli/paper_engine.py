@@ -84,6 +84,10 @@ async def _load_strategy(
         from trading.strategies.polymarket_btc5m.trend_confirm_t1_v1 import TrendConfirmT1V1
 
         return TrendConfirmT1V1(config=cfg)
+    if name == "trend_confirm_t1_v2":
+        from trading.strategies.polymarket_btc5m.trend_confirm_t1_v2 import TrendConfirmT1V2
+
+        return TrendConfirmT1V2(config=cfg)
     if name == "oracle_lag_v1":
         from trading.cli.backtest import _load_oracle_lag_cesta
         from trading.strategies.polymarket_btc5m.oracle_lag_v1 import OracleLagV1
@@ -105,19 +109,24 @@ async def _load_strategy(
             model=runner,
             microstructure_provider=microstructure_provider,
         )
-    if name == "mm_rebate_v1":
-        # Step 2 — first MM-style strategy. Uses on_tick + limit_book_sim
-        # via MMPaperDriver, NOT the standard ENTER flow.
+    if name in ("mm_rebate_v1", "mm_rebate_v1_btc15m", "mm_rebate_v1_btc5m",
+                 "mm_rebate_v1_eth15m", "mm_rebate_v1_eth5m"):
+        # Same class, 4 instances. Each TOML sets a distinct
+        # params.instance_name + params.slug_pattern so client_order_ids,
+        # trading.fills.strategy_id, and the paper-driver registry stay
+        # collision-free.
         from trading.strategies.polymarket_btc15m._k_estimator import KEstimator
         from trading.strategies.polymarket_btc15m.mm_rebate_v1 import MMRebateV1
 
-        k_est = KEstimator(strategy_id="mm_rebate_v1")
-        # Warm-start from Step 0 v1 nominee bucket (parametrizable later).
-        k_est.warm_start("0.15-0.20", 2, k0=37.4, minutes=60.0)
+        instance = cfg.get("params", {}).get("instance_name", name)
+        k_est = KEstimator(strategy_id=instance)
+        # Warm-start k(δ=2¢) at the lower edge of the relaxed zone so the
+        # first hour of paper has non-zero spread analytics. Parametrizable.
+        k_est.warm_start("0.30-0.40", 2, k0=28.0, minutes=60.0)
         try:
             await k_est.load_from_db()
         except Exception:
-            pass  # tolerate empty/no state at first boot
+            pass
         return MMRebateV1(config=cfg, k_estimator=k_est)
     raise RuntimeError(f"unknown strategy: {name}")
 
@@ -193,6 +202,21 @@ async def main_async() -> None:
     drivers: list[PaperDriver] = []
     oracle_lag_cestas: list = []
     strategies_cfg = staging_cfg.get("strategies", {})
+
+    # Shared MM aggregate-cap state (Step 2 multi-instance expansion).
+    # Applied across all MMPaperDriver instances; direction-style drivers
+    # ignore it. Caps come from staging.toml [paper.global_caps].
+    from trading.paper.global_mm_state import GlobalMMState
+
+    global_caps_cfg = staging_cfg.get("paper", {}).get("global_caps", {})
+    mm_global_state = GlobalMMState(
+        max_total_capital_at_risk_usd=float(
+            global_caps_cfg.get("max_total_capital_at_risk_usd", 1e9)
+        ),
+        max_total_inventory_usdc=float(
+            global_caps_cfg.get("max_total_inventory_usdc_across_strategies", 1e9)
+        ),
+    )
     for name, entry in strategies_cfg.items():
         if not entry.get("enabled"):
             log.info("paper_engine.strategy.disabled", name=name)
@@ -236,6 +260,7 @@ async def main_async() -> None:
                 cfg=_driver_config(name, strategy_cfg, staging_cfg),
                 redis_url=redis_url,
                 limit_book=limit_book,
+                global_mm_state=mm_global_state,
             )
         else:
             driver = PaperDriver(
