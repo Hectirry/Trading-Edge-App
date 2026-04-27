@@ -7,10 +7,10 @@ description = "MM neutral en BTC-updown 5m, zona [0.25, 0.50). Paper soak MORE-a
 instance_name      = "mm_rebate_v1_btc5m"
 slug_pattern       = "btc-updown-5m-"
 
-zone_lo            = 0.25
-zone_hi            = 0.50
-dead_zone_lo       = 0.50
-dead_zone_hi       = 0.55
+zone_lo            = 0.20
+zone_hi            = 0.60
+dead_zone_lo       = 0.99
+dead_zone_hi       = 0.99
 
 window_seconds         = 300
 entry_window_start_s   = 10      # was 30 — quote almost immediately

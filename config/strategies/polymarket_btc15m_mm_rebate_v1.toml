@@ -15,10 +15,10 @@ slug_pattern       = "btc-updown-15m-"
 # observation that 99% of 15m market lifetime is spent in [0.40, 0.60].
 # Edge of dead zone has liquidity but also informed-bot competition; that
 # competition is exactly what the aggressive paper soak measures.
-zone_lo            = 0.25
-zone_hi            = 0.50
-dead_zone_lo       = 0.50      # raised from 0.40 to give zone_hi headroom
-dead_zone_hi       = 0.55
+zone_lo            = 0.20
+zone_hi            = 0.60
+dead_zone_lo       = 0.99      # raised from 0.40 to give zone_hi headroom
+dead_zone_hi       = 0.99
 
 # Time window inside each 15-min market.
 window_seconds         = 900

@@ -7,10 +7,10 @@ description = "MM neutral en ETH-updown 15m, zona [0.25, 0.50). Paper soak MORE-
 instance_name      = "mm_rebate_v1_eth15m"
 slug_pattern       = "eth-updown-15m-"
 
-zone_lo            = 0.25
-zone_hi            = 0.50
-dead_zone_lo       = 0.50
-dead_zone_hi       = 0.55
+zone_lo            = 0.20
+zone_hi            = 0.60
+dead_zone_lo       = 0.99
+dead_zone_hi       = 0.99
 
 window_seconds         = 900
 entry_window_start_s   = 30      # was 60 — quote earlier
