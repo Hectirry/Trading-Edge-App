@@ -227,9 +227,13 @@ def _sum_usd(levels: list) -> float:
 
 
 async def refresh_markets_loop(state: FeedState) -> None:
-    """Every 30 s, call Gamma API for the next upcoming btc-updown-5m markets
-    (filtered by series_id=10684, ordered by endDate asc, those not yet
-    closed). Populate markets/tokens maps so CLOB subscribes to them.
+    """Every 30 s, refresh the markets the paper engine subscribes to:
+    (1) btc-updown-5m via series_id=10684 — fast, dense, existing path.
+    (2) btc-updown-15m via global /events scan + slug-prefix filter — the
+        15m series has no numeric series_id (per ADR 0015 / Step -1.b).
+        Bounded by GLOBAL_15M_PAGES_PER_REFRESH so the loop stays cheap.
+
+    Populates markets/tokens maps for BOTH so CLOB subscribes uniformly.
     """
     async with httpx.AsyncClient(timeout=15.0) as client:
         while True:
@@ -237,7 +241,105 @@ async def refresh_markets_loop(state: FeedState) -> None:
                 await _refresh_once(client, state)
             except Exception as e:
                 log.warning("paper.market_refresh.err", err=str(e))
+            try:
+                await _refresh_once_15m(client, state)
+            except Exception as e:
+                log.warning("paper.market_refresh.15m.err", err=str(e))
             await asyncio.sleep(30)
+
+
+# Bound the global /events scan per refresh cycle. 15m hits cluster around
+# ~13 per 500-event page; 5 pages = ~65 hits = enough to cover ~6.5 hours
+# of upcoming 15m markets at 96/day.
+GLOBAL_15M_PAGES_PER_REFRESH = 5
+GAMMA_PAGE_SIZE = 500
+
+
+async def _refresh_once_15m(client: httpx.AsyncClient, state: FeedState) -> None:
+    """Sister-pass for `btc-updown-15m`. The 15m series has no numeric
+    series_id (per ADR 0015 verification + Step -1.b). We scan the global
+    `/events` endpoint ordered by endDate ascending starting from now-15min,
+    bounded by GLOBAL_15M_PAGES_PER_REFRESH pages, filtering slugs
+    client-side. Adds discovered 15m markets to the same `state.markets`
+    map so the CLOB WS subscriber + tick recorder see them uniformly with
+    the 5m markets.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    end_date_min = (datetime.now(tz=UTC) - timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = time()
+    for page in range(GLOBAL_15M_PAGES_PER_REFRESH):
+        try:
+            r = await client.get(
+                "https://gamma-api.polymarket.com/events",
+                params={
+                    "closed": "false",
+                    "order": "endDate",
+                    "ascending": "true",
+                    "end_date_min": end_date_min,
+                    "limit": GAMMA_PAGE_SIZE,
+                    "offset": page * GAMMA_PAGE_SIZE,
+                },
+            )
+        except Exception as e:
+            log.warning("paper.market_refresh.15m.http_err", page=page, err=str(e))
+            return
+        if r.status_code != 200:
+            return
+        events = r.json()
+        if not isinstance(events, list) or not events:
+            return
+        added = 0
+        async with state.lock:
+            for ev in events:
+                if ev.get("closed"):
+                    continue
+                for m in ev.get("markets") or []:
+                    slug = m.get("slug") or ev.get("slug")
+                    if not slug or not slug.startswith("btc-updown-15m-"):
+                        continue
+                    try:
+                        close_ts = int(slug.rsplit("-", 1)[-1])
+                    except ValueError:
+                        continue
+                    if close_ts <= now:
+                        continue
+                    condition_id = m.get("conditionId")
+                    if not condition_id:
+                        continue
+                    tokens_raw = m.get("clobTokenIds")
+                    if isinstance(tokens_raw, str):
+                        try:
+                            tokens = json.loads(tokens_raw)
+                        except Exception:
+                            continue
+                    else:
+                        tokens = tokens_raw or []
+                    if len(tokens) != 2:
+                        continue
+                    yes_id, no_id = str(tokens[0]), str(tokens[1])
+                    if condition_id not in state.markets:
+                        added += 1
+                    state.markets[condition_id] = MarketMeta(
+                        condition_id=condition_id,
+                        slug=slug,
+                        yes_token_id=yes_id,
+                        no_token_id=no_id,
+                        window_close_ts=close_ts,
+                        open_price=state.markets.get(
+                            condition_id, MarketMeta("", "", "", "", 0)
+                        ).open_price,
+                        open_price_captured=state.markets.get(
+                            condition_id, MarketMeta("", "", "", "", 0)
+                        ).open_price_captured,
+                    )
+                    state.token_to_condition[yes_id] = condition_id
+                    state.token_to_condition[no_id] = condition_id
+                    state.token_side[yes_id] = "yes"
+                    state.token_side[no_id] = "no"
+        if added > 0:
+            log.info("paper.market_refresh.15m.page", page=page, added=added)
+        await asyncio.sleep(0.2)
 
 
 async def _refresh_once(client: httpx.AsyncClient, state: FeedState) -> None:
