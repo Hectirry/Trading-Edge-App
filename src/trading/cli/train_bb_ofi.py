@@ -46,6 +46,7 @@ from pathlib import Path
 # duplication. If they ever move, this module breaks loudly at import
 # time (preferable to silent feature drift).
 from trading.cli.train_last90s import (
+    _expected_calibration_error,
     _fetch_ohlcv_1m_closes,
     _load_resolved_markets,
     _load_ticks_for_slug,
@@ -505,6 +506,137 @@ def build_samples(
     return samples
 
 
+# ----------------------------------------------------------- walk-forward
+
+
+def _eval_on_test(model, calibrator, test_samples: list[Sample]) -> dict:
+    """Score a trained booster (+ optional calibrator) on a held-out
+    chronological fold. Returns AUC / Brier / log-loss / ECE."""
+    import numpy as np
+    from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
+
+    X = np.asarray([s.features for s in test_samples], dtype=np.float64)
+    y = np.asarray([s.label for s in test_samples], dtype=np.int32)
+    p = np.asarray(model.predict(X), dtype=np.float64)
+    if calibrator is not None:
+        p = np.asarray(calibrator.predict(p), dtype=np.float64)
+    return {
+        "n_test": int(len(test_samples)),
+        "test_auc": float(roc_auc_score(y, p)),
+        "test_brier": float(brier_score_loss(y, p)),
+        "test_logloss": float(log_loss(y, p, labels=[0, 1])),
+        "test_ece": float(_expected_calibration_error(p, y)),
+    }
+
+
+def run_walk_forward(
+    samples: list[Sample],
+    *,
+    n_folds: int,
+    fold_days: int,
+    optuna_trials: int,
+    time_budget_s: int,
+    random_state: int,
+    calibration: str,
+) -> dict:
+    """Expanding-window walk-forward: fit on every sample with
+    ``close_ts < test_window_start``, evaluate on the next
+    ``fold_days``. Folds run oldest-first so logs read in time order.
+    Folds with too few train/test samples are skipped, not failed.
+    """
+    import numpy as np
+
+    samples = sorted(samples, key=lambda s: s.close_ts)
+    if not samples:
+        return {"folds": [], "summary": {"n_folds_evaluated": 0}}
+
+    fold_secs = fold_days * 86400
+    t_max = float(samples[-1].close_ts)
+    folds: list[dict] = []
+
+    for k in range(n_folds):
+        # Oldest fold first: k=0 ends earliest, k=n_folds-1 ends at t_max.
+        offset_from_end = (n_folds - 1 - k) * fold_secs
+        test_end = t_max - offset_from_end
+        test_start = test_end - fold_secs
+        train_fold = [s for s in samples if s.close_ts < test_start]
+        test_fold = [s for s in samples if test_start <= s.close_ts < test_end]
+        if len(train_fold) < 200 or len(test_fold) < 30:
+            log.warning(
+                "fold %d: skip (n_train=%d, n_test=%d)",
+                k,
+                len(train_fold),
+                len(test_fold),
+            )
+            folds.append(
+                {
+                    "fold": k,
+                    "skipped": True,
+                    "test_start": test_start,
+                    "test_end": test_end,
+                    "n_train": len(train_fold),
+                    "n_test": len(test_fold),
+                }
+            )
+            continue
+
+        log.info(
+            "fold %d: train n=%d, test n=%d, test_window=[%s, %s)",
+            k,
+            len(train_fold),
+            len(test_fold),
+            datetime.fromtimestamp(test_start, tz=UTC).isoformat(),
+            datetime.fromtimestamp(test_end, tz=UTC).isoformat(),
+        )
+        trained = train(
+            train_fold,
+            optuna_trials=optuna_trials,
+            time_budget_s=time_budget_s,
+            random_state=random_state,
+            calibration=calibration,
+        )
+        oos = _eval_on_test(trained["model"], trained["calibrator"], test_fold)
+        folds.append(
+            {
+                "fold": k,
+                "skipped": False,
+                "test_start": test_start,
+                "test_end": test_end,
+                "n_train": len(train_fold),
+                "n_test": len(test_fold),
+                "calibration_mode": trained["metrics"].get("calibration_mode", "none"),
+                "ece_val_train": trained["metrics"].get("ece_val"),
+                **oos,
+            }
+        )
+        log.info(
+            "fold %d OOS: AUC=%.4f Brier=%.4f ECE=%.4f",
+            k,
+            oos["test_auc"],
+            oos["test_brier"],
+            oos["test_ece"],
+        )
+
+    valid = [f for f in folds if not f.get("skipped", False)]
+    if valid:
+        aucs = [f["test_auc"] for f in valid]
+        briers = [f["test_brier"] for f in valid]
+        eces = [f["test_ece"] for f in valid]
+        summary = {
+            "n_folds_evaluated": len(valid),
+            "mean_auc": float(np.mean(aucs)),
+            "std_auc": float(np.std(aucs)),
+            "min_auc": float(np.min(aucs)),
+            "mean_brier": float(np.mean(briers)),
+            "mean_ece": float(np.mean(eces)),
+            "max_ece": float(np.max(eces)),
+            "stability_index": float(np.mean(np.array(aucs) >= 0.55)),
+        }
+    else:
+        summary = {"n_folds_evaluated": 0}
+    return {"folds": folds, "summary": summary}
+
+
 # ---------------------------------------------------------- write artefacts
 
 
@@ -677,6 +809,32 @@ def main() -> int:
         "polymarket_markets for the full universe; sqlite uses polybot's "
         "trade-resolved subset (~547 markets).",
     )
+    ap.add_argument(
+        "--calibration",
+        choices=["isotonic", "platt"],
+        default="platt",
+        help="Probability calibrator. Default Platt (one-DOF sigmoid) "
+        "after isotonic was shown to overfit val on the 2026-04-26 ensemble.",
+    )
+    ap.add_argument(
+        "--walk-forward",
+        action="store_true",
+        help="Run expanding-window walk-forward eval instead of a single "
+        "70/15/15 split. Writes per-fold metrics to stdout; skips artefact "
+        "writing.",
+    )
+    ap.add_argument(
+        "--wf-folds",
+        type=int,
+        default=4,
+        help="Number of walk-forward test folds (default 4).",
+    )
+    ap.add_argument(
+        "--wf-fold-days",
+        type=int,
+        default=5,
+        help="Days per walk-forward test fold (default 5).",
+    )
     args = ap.parse_args()
 
     t_from = datetime.fromisoformat(args.date_from).replace(tzinfo=UTC)
@@ -766,17 +924,42 @@ def main() -> int:
         )
         return 2
 
+    if args.walk_forward:
+        log.info(
+            "walk-forward — n_samples=%d folds=%d fold_days=%d calibration=%s",
+            len(samples),
+            args.wf_folds,
+            args.wf_fold_days,
+            args.calibration,
+        )
+        wf = run_walk_forward(
+            samples,
+            n_folds=args.wf_folds,
+            fold_days=args.wf_fold_days,
+            optuna_trials=args.optuna_trials,
+            time_budget_s=args.time_budget_s,
+            random_state=args.seed,
+            calibration=args.calibration,
+        )
+        import json
+
+        print(json.dumps(wf, indent=2, default=str))
+        log.info("walk-forward summary: %s", wf["summary"])
+        return 0
+
     log.info(
-        "training — n=%d optuna_trials=%d budget_s=%d",
+        "training — n=%d optuna_trials=%d budget_s=%d calibration=%s",
         len(samples),
         args.optuna_trials,
         args.time_budget_s,
+        args.calibration,
     )
     trained = train(
         samples,
         optuna_trials=args.optuna_trials,
         time_budget_s=args.time_budget_s,
         random_state=args.seed,
+        calibration=args.calibration,
     )
     log.info("metrics: %s", trained["metrics"])
 

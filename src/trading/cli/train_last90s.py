@@ -499,11 +499,11 @@ def train(
     optuna_trials: int,
     time_budget_s: int,
     random_state: int = 42,
+    calibration: str = "isotonic",
 ) -> dict:
     import lightgbm as lgb
     import numpy as np
     import optuna
-    from sklearn.isotonic import IsotonicRegression
     from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 
     X = np.asarray([s.features for s in samples], dtype=np.float64)
@@ -572,7 +572,16 @@ def train(
     ece_val = _expected_calibration_error(val_probs, y_val)
     calibrator = None
     if ece_val > 0.05:
-        calibrator = IsotonicRegression(out_of_bounds="clip").fit(val_probs, y_val)
+        if calibration == "platt":
+            from trading.research.calibration import fit_platt
+
+            calibrator = fit_platt(val_probs, y_val)
+        elif calibration == "isotonic":
+            from sklearn.isotonic import IsotonicRegression
+
+            calibrator = IsotonicRegression(out_of_bounds="clip").fit(val_probs, y_val)
+        else:
+            raise ValueError(f"unknown calibration mode: {calibration!r}")
 
     test_logloss = float(log_loss(y_test, test_probs))
     test_auc = float(roc_auc_score(y_test, test_probs))
@@ -587,6 +596,7 @@ def train(
             "test_brier": test_brier,
             "ece_val": ece_val,
             "calibrated": calibrator is not None,
+            "calibration_mode": calibration if calibrator is not None else "none",
             "n_train": n_train,
             "n_val": n_val,
             "n_test": len(X_test),

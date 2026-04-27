@@ -172,8 +172,9 @@ def _train_ensemble(
     (distribution of per-prediction stddev).
     """
     import numpy as np
-    from sklearn.isotonic import IsotonicRegression
     from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
+
+    from trading.research.calibration import fit_platt
 
     X = np.asarray([s.features for s in samples], dtype=np.float64)
     y = np.asarray([s.label for s in samples], dtype=np.int32)
@@ -236,11 +237,11 @@ def _train_ensemble(
     test_mean = test_preds.mean(axis=0)
     test_std = test_preds.std(axis=0, ddof=1) if n_members > 1 else np.zeros_like(test_mean)
 
-    # Calibrate on val mean. We *always* fit isotonic for the ensemble
-    # because the whole point is calibration; the train_last90s
-    # conditional ``if ece_val > 0.05`` was an optimisation for single
-    # models, irrelevant here.
-    calibrator = IsotonicRegression(out_of_bounds="clip").fit(val_mean, y_val)
+    # Calibrate on val mean with Platt scaling (single sigmoid, 1 DOF).
+    # 2026-04-26 ensemble runs with isotonic showed val ECE ≈ 1e-17 and
+    # test ECE 0.39 — classic isotonic-on-small-val overfit. Platt has
+    # one degree of freedom and cannot memorise.
+    calibrator = fit_platt(val_mean, y_val)
     test_calibrated = calibrator.predict(test_mean)
     val_calibrated = calibrator.predict(val_mean)
 
