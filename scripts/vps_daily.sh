@@ -134,8 +134,27 @@ push_with_backoff() {
 
 log "git fetch + rebase onto origin/$BRANCH"
 git fetch origin "$BRANCH" || fail "git fetch failed"
+
+# Park local pollution (Claude Code edits to .claude/settings.json, stray
+# runbook edits, etc.) so the rebase doesn't refuse. Auto-popped after.
+STASHED=0
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  if git stash push --include-untracked -m "vps_daily auto-stash $(date -u +%Y-%m-%dT%H:%MZ)"; then
+    STASHED=1
+    log "stashed dirty working tree before rebase"
+  else
+    fail "git stash failed (working tree dirty, cannot rebase)"
+  fi
+fi
+
 git checkout "$BRANCH" || fail "git checkout failed"
 git pull --rebase origin "$BRANCH" || fail "git pull --rebase failed"
+
+if [ "$STASHED" -eq 1 ]; then
+  if ! git stash pop; then
+    log "WARN: stash pop hit conflict — leaving stash for manual review"
+  fi
+fi
 
 if [ ! -f "$BACKTESTS_FILE" ]; then
   log "no $BACKTESTS_FILE — nothing to run"
