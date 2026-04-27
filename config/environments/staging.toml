@@ -41,6 +41,18 @@ params_file = "config/strategies/pbt5m_last_90s_forecaster_v3.toml"
 enabled = true
 params_file = "config/strategies/pbt5m_oracle_lag_v1.toml"
 
+[strategies.mm_rebate_v1]
+# Step 2 — first MM-style strategy on Polymarket BTC-updown 15m. Direct
+# paper deploy without shadow per operator decision (aggressive paper
+# soak). Caps: $50 inventory, $500 capital_at_risk, 10 markets concurrent,
+# $20 stake. NO daily auto-pause on PnL drawdown — operator wants the
+# full drawdown signal. MMSafetyGuard alerts but does not auto-kill in
+# paper. Active zone [0.15, 0.40]; above-zona and dead zone hard skip.
+# Decision at 7 days: scale 2× if Sharpe daily > 0.5 + adverse < Step 0
+# projection; else stop, analyze, decide.
+enabled = true
+params_file = "config/strategies/polymarket_btc15m_mm_rebate_v1.toml"
+
 [deployment]
 service = "tea-engine"
 # staging: no confirmation file required.

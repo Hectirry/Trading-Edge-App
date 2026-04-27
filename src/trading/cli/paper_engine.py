@@ -105,6 +105,20 @@ async def _load_strategy(
             model=runner,
             microstructure_provider=microstructure_provider,
         )
+    if name == "mm_rebate_v1":
+        # Step 2 — first MM-style strategy. Uses on_tick + limit_book_sim
+        # via MMPaperDriver, NOT the standard ENTER flow.
+        from trading.strategies.polymarket_btc15m._k_estimator import KEstimator
+        from trading.strategies.polymarket_btc15m.mm_rebate_v1 import MMRebateV1
+
+        k_est = KEstimator(strategy_id="mm_rebate_v1")
+        # Warm-start from Step 0 v1 nominee bucket (parametrizable later).
+        k_est.warm_start("0.15-0.20", 2, k0=37.4, minutes=60.0)
+        try:
+            await k_est.load_from_db()
+        except Exception:
+            pass  # tolerate empty/no state at first boot
+        return MMRebateV1(config=cfg, k_estimator=k_est)
     raise RuntimeError(f"unknown strategy: {name}")
 
 
@@ -202,17 +216,39 @@ async def main_async() -> None:
             fill_probability=float(strategy_cfg["fill_model"]["fill_probability"]),
         )
         exec_client = SimulatedExecutionClient(strategy_id=strategy.name, fill_params=fill_params)
-        driver = PaperDriver(
-            strategy=strategy,
-            risk_manager=risk,
-            exec_client=exec_client,
-            tg=tg,
-            heartbeat=heartbeat,
-            cfg=_driver_config(name, strategy_cfg, staging_cfg),
-            redis_url=redis_url,
+        # Strategy class decides which driver to spawn. MM-style strategies
+        # (override `on_tick`) get an MMPaperDriver bound to a LimitBookSim;
+        # direction-style strategies keep the standard PaperDriver.
+        is_mm_strategy = (
+            type(strategy).on_tick is not StrategyBase.on_tick
         )
+        if is_mm_strategy:
+            from trading.paper.limit_book_sim import LimitBookSim
+            from trading.paper.mm_driver import MMPaperDriver
+
+            limit_book = LimitBookSim(mode="paper")
+            driver = MMPaperDriver(
+                strategy=strategy,
+                risk_manager=risk,
+                exec_client=exec_client,
+                tg=tg,
+                heartbeat=heartbeat,
+                cfg=_driver_config(name, strategy_cfg, staging_cfg),
+                redis_url=redis_url,
+                limit_book=limit_book,
+            )
+        else:
+            driver = PaperDriver(
+                strategy=strategy,
+                risk_manager=risk,
+                exec_client=exec_client,
+                tg=tg,
+                heartbeat=heartbeat,
+                cfg=_driver_config(name, strategy_cfg, staging_cfg),
+                redis_url=redis_url,
+            )
         drivers.append(driver)
-        log.info("paper_engine.strategy.enabled", name=name)
+        log.info("paper_engine.strategy.enabled", name=name, is_mm=is_mm_strategy)
 
     if not drivers:
         log.error("paper_engine.no_strategies_enabled")

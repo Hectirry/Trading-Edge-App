@@ -13,6 +13,7 @@ from trading.ingest.binance import BinanceAdapter
 from trading.ingest.bybit import BybitAdapter
 from trading.ingest.coinbase import CoinbaseAdapter
 from trading.ingest.polymarket import PolymarketAdapter
+from trading.ingest.polymarket.adapter import SLUG_PREFIX_15M
 from trading.ingest.polymarket.slug import SLUG_PREFIX
 
 log = get_logger("cli.ingestor")
@@ -129,6 +130,16 @@ class Supervisor:
                     await self.polymarket.discover_markets(SLUG_PREFIX, near)
                 except Exception as e:
                     log.warning("polymarket.nrt.err", err=str(e))
+                # 15m additive (Step -1.b live-tap forward, mm_rebate_v1).
+                # The 15m series has no numeric series_id so this is a global
+                # /events scan filtered client-side — slower than 5m, but the
+                # 10-min near-window keeps the cap reachable. Pre-2026-04-28
+                # there is NO 15m coverage; consumers must check
+                # research.market_manifest_btc15m before assuming history.
+                try:
+                    await self.polymarket.discover_markets(SLUG_PREFIX_15M, near)
+                except Exception as e:
+                    log.warning("polymarket.nrt.err.15m", err=str(e))
             # Get currently open condition_ids.
             async with acquire() as conn:
                 rows = await conn.fetch(

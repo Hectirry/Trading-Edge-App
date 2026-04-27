@@ -33,6 +33,21 @@ CLOB_REST = "https://clob.polymarket.com"
 BTC_UPDOWN_5M_SERIES_ID = 10684
 GAMMA_EVENTS_PAGE_SIZE = 500
 
+# Supported slug-pattern prefixes for `discover_markets`.
+# 5m has a numeric `series_id` so enumeration is dense (every event in the
+# series is a 5m market). 15m has `seriesSlug='btc-up-or-down-15m'` only —
+# Gamma honors no server-side filter for it, so /events must be paginated
+# in default ordering and slug-prefix-filtered client-side. This is much
+# less efficient (~13 hits per 500 events) and bounded by /events ordering
+# depth; historical coverage > ~7 days requires more than the safety cap
+# of pages this adapter will scan. Pre-2026-04-28 there is NO 15m coverage
+# in TEA — consumers must check `research.market_manifest_btc15m` before
+# assuming N days of history.
+SLUG_PREFIX_5M = "btc-updown-5m-"
+SLUG_PREFIX_15M = "btc-updown-15m-"
+SUPPORTED_SLUG_PATTERNS = (SLUG_PREFIX_5M, SLUG_PREFIX_15M)
+GLOBAL_EVENTS_SAFETY_PAGE_CAP = 60  # ≈ 30k events scanned worst-case for 15m
+
 
 class PolymarketAdapter(PolymarketIngestAdapter):
     name = "polymarket"
@@ -89,18 +104,29 @@ class PolymarketAdapter(PolymarketIngestAdapter):
         return None
 
     async def discover_markets(self, slug_pattern: str, since: datetime) -> int:
-        """Enumerate btc-updown-5m markets from Gamma events (series_id=10684) since `since`.
+        """Enumerate markets matching `slug_pattern` since `since`, upsert metadata.
 
-        Gamma's `?slug=<exact>` lookup drops archived markets after a few minutes, so
-        individual-slug enumeration cannot recover 30 days of history. The events API
-        does retain historical markets and can be paginated by `series_id` in descending
-        `endDate` order. Each event contains an embedded `markets` array with the fields
-        we need (conditionId, slug, clobTokenIds, resolution state).
+        Dispatches by pattern:
+          - 5m: queries Gamma /events filtered by `series_id=BTC_UPDOWN_5M_SERIES_ID`
+                — efficient, every event in the series is a 5m market.
+          - 15m: queries /events globally (no working server-side filter for 15m series),
+                 paginates default ordering, filters slugs client-side, bounded by
+                 GLOBAL_EVENTS_SAFETY_PAGE_CAP. Historical coverage capped at whatever
+                 endDate is reached before the cap fires (typically ~6-7 days).
 
-        Returns the number of upsert-attempt rows (ON CONFLICT DO NOTHING at PK).
+        Both paths upsert the same columns on `market_data.polymarket_markets` with
+        ON CONFLICT DO NOTHING — safe to re-run.
+
+        Returns the number of upsert-attempt rows.
         """
-        if slug_pattern != SLUG_PREFIX:
-            raise ValueError(f"only {SLUG_PREFIX!r} supported in Phase 1")
+        if slug_pattern not in SUPPORTED_SLUG_PATTERNS:
+            raise ValueError(f"unsupported slug_pattern: {slug_pattern!r}")
+        if slug_pattern == SLUG_PREFIX_5M:
+            return await self._discover_via_series(slug_pattern, since)
+        return await self._discover_via_global_events(slug_pattern, since)
+
+    async def _discover_via_series(self, slug_pattern: str, since: datetime) -> int:
+        """5m path — paginate /events?series_id=10684 (dense, fast)."""
         total = 0
         offset = 0
         since_epoch = int(since.astimezone(UTC).timestamp())
@@ -116,7 +142,7 @@ class PolymarketAdapter(PolymarketIngestAdapter):
                 if end_ts is not None and end_ts < since_epoch:
                     reached_since = True
                 for m in ev.get("markets") or []:
-                    row = self._market_row_from_event(m, ev)
+                    row = self._market_row_from_event(m, ev, slug_pattern)
                     if row is not None:
                         rows.append(row)
             if rows:
@@ -141,11 +167,79 @@ class PolymarketAdapter(PolymarketIngestAdapter):
             offset += GAMMA_EVENTS_PAGE_SIZE
             log.info(
                 "polymarket.discover.page",
+                pattern=slug_pattern,
                 offset=offset,
                 page_markets=len(rows),
                 total_so_far=total,
             )
-        log.info("polymarket.discover.done", upserted=total, since=since.isoformat())
+        log.info("polymarket.discover.done", pattern=slug_pattern, upserted=total, since=since.isoformat())
+        return total
+
+    async def _discover_via_global_events(self, slug_pattern: str, since: datetime) -> int:
+        """15m path — paginate /events globally, filter slugs client-side.
+
+        Gamma offers no working server-side filter for the 15m series, so we
+        paginate in default ordering (endDate desc) and check each event's
+        markets array. Bounded by GLOBAL_EVENTS_SAFETY_PAGE_CAP to prevent
+        runaway runtime; pre-2026-04-28 markets are unreachable through this
+        path without raising the cap (rate-limit prohibitive).
+        """
+        total = 0
+        since_epoch = int(since.astimezone(UTC).timestamp())
+        for page in range(GLOBAL_EVENTS_SAFETY_PAGE_CAP):
+            offset = page * GAMMA_EVENTS_PAGE_SIZE
+            events = await self._fetch_events_page_global(offset)
+            if not events:
+                break
+            rows: list[tuple] = []
+            page_min_end_ts: int | None = None
+            for ev in events:
+                end_ts = self._iso_to_epoch(ev.get("endDate"))
+                if end_ts is not None and (page_min_end_ts is None or end_ts < page_min_end_ts):
+                    page_min_end_ts = end_ts
+                for m in ev.get("markets") or []:
+                    row = self._market_row_from_event(m, ev, slug_pattern)
+                    if row is not None:
+                        rows.append(row)
+            if rows:
+                await upsert_many(
+                    "market_data.polymarket_markets",
+                    [
+                        "condition_id",
+                        "slug",
+                        "question",
+                        "window_ts",
+                        "resolved",
+                        "outcome",
+                        "open_time",
+                        "close_time",
+                        "resolve_time",
+                        "metadata",
+                    ],
+                    rows,
+                    ["condition_id"],
+                )
+                total += len(rows)
+            log.info(
+                "polymarket.discover.page",
+                pattern=slug_pattern,
+                offset=offset,
+                page_markets=len(rows),
+                total_so_far=total,
+                page_min_end=page_min_end_ts,
+            )
+            if page_min_end_ts is not None and page_min_end_ts < since_epoch:
+                log.info("polymarket.discover.reached_since", pattern=slug_pattern, page=page)
+                break
+            if len(events) < GAMMA_EVENTS_PAGE_SIZE:
+                break
+        log.info(
+            "polymarket.discover.done",
+            pattern=slug_pattern,
+            upserted=total,
+            since=since.isoformat(),
+            note="global-events scan bounded by GLOBAL_EVENTS_SAFETY_PAGE_CAP",
+        )
         return total
 
     @retry(
@@ -177,6 +271,37 @@ class PolymarketAdapter(PolymarketIngestAdapter):
         data = r.json()
         return data if isinstance(data, list) else []
 
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=1, max=16),
+        retry=retry_if_exception_type((IngestRateLimitError, IngestSourceDown)),
+    )
+    async def _fetch_events_page_global(self, offset: int) -> list[dict]:
+        """Same as `_fetch_events_page` but without `series_id` filter — for 15m
+        which lacks a numeric series and must be slug-prefix-filtered client-side.
+        """
+        async with self.rate_limiter:
+            try:
+                r = await self._gamma.get(
+                    "/events",
+                    params={
+                        "order": "endDate",
+                        "ascending": "false",
+                        "limit": GAMMA_EVENTS_PAGE_SIZE,
+                        "offset": offset,
+                    },
+                )
+            except httpx.HTTPError as e:
+                raise IngestSourceDown(str(e)) from e
+        if r.status_code == 429:
+            raise IngestRateLimitError("gamma events 429")
+        if r.status_code >= 500:
+            raise IngestSourceDown(f"gamma events 5xx: {r.status_code}")
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else []
+
     @staticmethod
     def _iso_to_epoch(s: str | None) -> int | None:
         if not s:
@@ -186,9 +311,11 @@ class PolymarketAdapter(PolymarketIngestAdapter):
         except Exception:
             return None
 
-    def _market_row_from_event(self, m: dict, ev: dict) -> tuple | None:
+    def _market_row_from_event(
+        self, m: dict, ev: dict, slug_pattern: str = SLUG_PREFIX
+    ) -> tuple | None:
         slug = m.get("slug") or ev.get("slug")
-        if not slug or not slug.startswith(SLUG_PREFIX):
+        if not slug or not slug.startswith(slug_pattern):
             return None
         condition_id = m.get("conditionId")
         if not condition_id:
@@ -356,6 +483,185 @@ class PolymarketAdapter(PolymarketIngestAdapter):
                 return []
             data = r.json()
             return data.get("history", []) or []
+
+    async def backfill_market_prices_history(self, condition_id: str) -> int:
+        """Fetch historical prices for `condition_id` via CLOB /prices-history with
+        explicit startTs/endTs and persist to `market_data.polymarket_prices_history`.
+
+        Distinct from `backfill_market_prices` which writes to
+        `polymarket_prices` (the live mid table) and passes only `fidelity` —
+        the latter is rejected with HTTP 400 by the CLOB for archived markets.
+        This method mirrors the canonical pattern in
+        `scripts/backfill_polymarket_prices_history.py`: window =
+        [open_time - 5min, close_time + 5min], fidelity=1.
+
+        Returns total upserted rows (sum across YES + NO tokens).
+        """
+        async with acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT metadata->>'clobTokenIds' AS token_ids_json,
+                       EXTRACT(EPOCH FROM open_time)::bigint AS open_unix,
+                       EXTRACT(EPOCH FROM close_time)::bigint AS close_unix
+                FROM market_data.polymarket_markets WHERE condition_id=$1
+                """,
+                condition_id,
+            )
+        if not row or not row["token_ids_json"] or row["open_unix"] is None or row["close_unix"] is None:
+            return 0
+        try:
+            token_ids = json.loads(row["token_ids_json"])
+        except Exception:
+            return 0
+        if not isinstance(token_ids, list) or len(token_ids) < 2:
+            return 0
+        start_ts = int(row["open_unix"]) - 300
+        end_ts = int(row["close_unix"]) + 300
+        total = 0
+        for outcome_label, token_id in (("YES", str(token_ids[0])), ("NO", str(token_ids[1]))):
+            history = await self._fetch_price_history_range(token_id, start_ts, end_ts)
+            if not history:
+                continue
+            db_rows = [
+                (
+                    condition_id,
+                    token_id,
+                    outcome_label,
+                    datetime.fromtimestamp(int(p["t"]), tz=UTC),
+                    Decimal(str(p["p"])),
+                )
+                for p in history
+                if "t" in p and "p" in p
+            ]
+            if db_rows:
+                async with acquire() as conn:
+                    await conn.executemany(
+                        """
+                        INSERT INTO market_data.polymarket_prices_history
+                            (condition_id, token_id, outcome, ts, price)
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT (token_id, ts) DO NOTHING
+                        """,
+                        db_rows,
+                    )
+                total += len(db_rows)
+        return total
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=1, max=16),
+        retry=retry_if_exception_type((IngestRateLimitError, IngestSourceDown)),
+    )
+    async def _fetch_price_history_range(
+        self, token_id: str, start_ts: int, end_ts: int, fidelity: int = 1
+    ) -> list[dict]:
+        async with self.rate_limiter:
+            try:
+                r = await self._clob.get(
+                    "/prices-history",
+                    params={
+                        "market": token_id,
+                        "startTs": start_ts,
+                        "endTs": end_ts,
+                        "fidelity": fidelity,
+                    },
+                )
+            except httpx.HTTPError as e:
+                raise IngestSourceDown(str(e)) from e
+            if r.status_code == 429:
+                raise IngestRateLimitError("clob 429")
+            if r.status_code >= 500:
+                raise IngestSourceDown(f"clob 5xx: {r.status_code}")
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            return data.get("history", []) or []
+
+    async def backfill_market_trades(self, condition_id: str, page_size: int = 500) -> int:
+        """Fetch all historical trades for `condition_id` via Data API /trades.
+
+        The Data API endpoint returns trades ordered most-recent first, paginated
+        by `offset`. PK dedupe is `transactionHash`. ON CONFLICT DO NOTHING keeps
+        re-runs idempotent. The CLOB /trades endpoint is auth-gated (401);
+        Data API is the public alternative documented in Design.md I.7 §
+        "Polymarket Data API (reconciliación / trades históricos)".
+
+        Returns total upsert-attempt rows.
+        """
+        total = 0
+        offset = 0
+        while True:
+            trades = await self._fetch_trades_page(condition_id, offset, page_size)
+            if not trades:
+                break
+            db_rows: list[tuple] = []
+            for t in trades:
+                tx_hash = t.get("transactionHash")
+                token_id = t.get("asset")
+                ts_unix = t.get("timestamp")
+                price = t.get("price")
+                size = t.get("size")
+                side = t.get("side")
+                if not (tx_hash and token_id and ts_unix is not None and price is not None and size is not None and side):
+                    continue
+                db_rows.append(
+                    (
+                        condition_id,
+                        str(token_id),
+                        datetime.fromtimestamp(int(ts_unix), tz=UTC),
+                        str(tx_hash),
+                        Decimal(str(price)),
+                        Decimal(str(size)),
+                        str(side),
+                    )
+                )
+            if db_rows:
+                await upsert_many(
+                    "market_data.polymarket_trades",
+                    [
+                        "condition_id",
+                        "token_id",
+                        "ts",
+                        "tx_hash",
+                        "price",
+                        "size",
+                        "side",
+                    ],
+                    db_rows,
+                    ["condition_id", "tx_hash", "ts"],
+                )
+                total += len(db_rows)
+            if len(trades) < page_size:
+                break
+            offset += page_size
+        return total
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=1, max=16),
+        retry=retry_if_exception_type((IngestRateLimitError, IngestSourceDown)),
+    )
+    async def _fetch_trades_page(
+        self, condition_id: str, offset: int, limit: int
+    ) -> list[dict]:
+        async with self.rate_limiter:
+            try:
+                r = await self._data.get(
+                    "/trades",
+                    params={"market": condition_id, "limit": limit, "offset": offset},
+                )
+            except httpx.HTTPError as e:
+                raise IngestSourceDown(str(e)) from e
+            if r.status_code == 429:
+                raise IngestRateLimitError("data-api trades 429")
+            if r.status_code >= 500:
+                raise IngestSourceDown(f"data-api trades 5xx: {r.status_code}")
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            return data if isinstance(data, list) else []
 
     async def stream_prices(self, condition_ids: list[str]) -> None:
         # Map condition -> YES/NO token_ids from metadata.

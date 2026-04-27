@@ -16,6 +16,7 @@ Orden: activas → en-desarrollo → descartadas. Mantener ≤ 1 pantalla.
 |---|---|---|---|---|
 | cvd_confirm_t2_v0 | polymarket_btc5m | — (doc-only) | — | CVD 1m como 7º gate de confirmación sobre trend_confirm_t1_v1. Solo `.md`; no hay `.py` ni `.toml` todavía. |
 | oracle_lag_v1 | polymarket_btc5m | edge_likely (paper_ticks) | 2026-04-26 | Cesta Binance/Coinbase + USDT basis + Φ(δ/σ√τ). 7 sprints completados (ADR 0013); Sharpe/trade 0.515 sobre paper_ticks 11h, permutation pv=0. Promovido 2026-04-26 a paper activo (shadow=false, stake $2). |
+| mm_rebate_v1 | polymarket_btc15m | AMBIGUOUS (Step 0 v1 data-limited) | 2026-04-27 | Avellaneda-Stoikov MM neutral en BTC-updown 15m. Step −1 backfill 599 markets (1.59M prices + 970K trades) + adapter extension. Step 0: 3 below-zona buckets pasan 4/5 criterios; nominee 0.15-0.20 con E[I/h]=$12K (favorable adverse-selection asimétrica). Front_ratio gate data-blocked sin paper_ticks 15m. Re-eval 2026-05-27 con muestra acumulada. PR `feature/mm-rebate-v1-step-minus-1` abierto. |
 
 ## Descartadas
 
