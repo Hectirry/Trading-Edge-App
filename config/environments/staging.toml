@@ -33,10 +33,12 @@ enabled = true
 params_file = "config/strategies/pbt5m_last_90s_forecaster_v3.toml"
 
 [strategies.bb_residual_ofi_v1]
-# BB-residual + OFI shrinkage; per-tick scan across [60, 290] s.
-# Boots shadow (no active model row); strategy logs feature trail
-# until ensemble is trained. Promotion gated by tea-promotion-gate.
-enabled = true
+# DEACTIVATED 2026-04-27 — falsified by 3 independent walk-forward
+# runs (original 4×5d Platt, late-window t=270, HMM-regime t=210);
+# stability_index degraded from 0.25 to 0.00, fold mid-April inverts.
+# Block kept temporarily as deactivation marker; full removal in
+# follow-up commit per tea-strategy-removal protocol.
+enabled = false
 params_file = "config/strategies/pbt5m_bb_residual_ofi_v1.toml"
 
 [strategies.oracle_lag_v1]
