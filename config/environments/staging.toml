@@ -61,12 +61,10 @@ enabled = true
 params_file = "config/strategies/polymarket_eth5m_mm_rebate_v1.toml"
 
 [paper.global_caps]
-# Aggregate across all MM strategy instances (NOT applied to direction-style
-# strategies). Pre-flight in MMPaperDriver._dispatch_action: a PostQuote that
-# would breach either cap is dropped (logged as drop_global_cap).
-# 4 × $500 = $2000 nominal exposure with $500 headroom for safety.
-max_total_capital_at_risk_usd            = 2500.0
-max_total_inventory_usdc_across_strategies = 250.0
+# MORE-aggressive caps. 4 × $750 = $3000 capital + $500 headroom = $3500.
+# Inventory: 4 × $75 = $300 + $50 headroom = $350.
+max_total_capital_at_risk_usd            = 3500.0
+max_total_inventory_usdc_across_strategies = 350.0
 
 [deployment]
 service = "tea-engine"

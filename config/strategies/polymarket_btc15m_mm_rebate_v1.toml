@@ -22,32 +22,31 @@ dead_zone_hi       = 0.55
 
 # Time window inside each 15-min market.
 window_seconds         = 900
-entry_window_start_s   = 60     # quote starting at t=60s
-tau_terminal_s         = 30     # paper-aggressive: stop quoting last 30s
+entry_window_start_s   = 30     # paper-MORE-aggressive: t=30s (was 60)
+tau_terminal_s         = 15     # paper-MORE-aggressive: last 15s (was 30)
 
-# AS optimal-spread params.
-gamma_inventory_risk   = 0.5
-spread_floor_bps       = 50     # 0.5¢ minimum total spread
-spread_ceiling_bps     = 500    # safety cap at 5¢
+# AS optimal-spread params (MORE aggressive).
+gamma_inventory_risk   = 0.1     # was 0.5 — less risk-averse, tighter spreads
+spread_floor_bps       = 25      # was 50 — let it quote at 0.25¢ if math agrees
+spread_ceiling_bps     = 500     # ceiling stays as safety
 
-# Sizing (paper-aggressive: $20 stake = 4× oracle_lag_v1).
-stake_nominal_usd      = 20.0
+# Sizing (paper-MORE-aggressive: $30 stake).
+stake_nominal_usd      = 30.0    # was 20
 
 # Quote TTL (0 = GTC, cancelled on book-move via ReplaceQuote logic).
 quote_ttl_seconds      = 0
 
 [sizing]
-# Per-trade stake. Kelly disabled in V1; fixed stake until soak data accumulates.
-stake_usd              = 20.0
+stake_usd              = 30.0
 kelly_fraction         = 0.25
 kelly_min_trades       = 50
-kelly_max_stake_usd    = 30.0
+kelly_max_stake_usd    = 50.0
 
 [backtest]
 # These mirror direction-style strategies for parity at the driver layer.
 # mm_rebate_v1 is MM (continuous quoting), so the entry_t window is wide.
-earliest_entry_t_s     = 60
-latest_entry_t_s       = 870       # T - tau_terminal
+earliest_entry_t_s     = 30
+latest_entry_t_s       = 885       # T - tau_terminal (15s)
 window_seconds         = 900
 decision_interval_s    = 1
 
@@ -76,22 +75,21 @@ loss_pause_window_minutes  = 0
 loss_pause_duration_minutes = 0
 
 [mm_safety]
-# MMSafetyGuard — NOT bypassable in backtest. Paper-aggressive thresholds.
-inventory_cap_usdc           = 50.0      # 5× conservative, 10× original q_max
-cancel_fill_ratio_max        = 30.0      # paper: see the ratio without prematurely killing
+# MMSafetyGuard — NOT bypassable. Paper-MORE-aggressive thresholds.
+inventory_cap_usdc           = 75.0      # was 50 — bigger inventory tolerance
+cancel_fill_ratio_max        = 50.0      # was 30 — see ratio fully before killing
 cancel_fill_window_minutes   = 5
 cancel_fill_kill_threshold   = 2
 cancel_fill_kill_window_min  = 60
 cancel_fill_resume_min       = 15
 taker_fee_canary_pct         = 0.05      # 5% rolling 7d
 taker_fee_canary_window_days = 7
-tau_terminal_s               = 30
+tau_terminal_s               = 15        # match params section above (was 30)
 auto_kill_on_breach          = false     # paper: alerts only, NO auto-kill
 
 [paper]
-# capital_at_risk = $500 (paper-aggressive: 5× single-strategy default).
-capital_usd                 = 500.0
-daily_loss_alert_pct        = 0.30       # alert at -30% drawdown (paper-permissive)
-daily_loss_pause_pct        = 9.99       # disabled — operator wants full drawdown signal
-max_quotes_concurrent       = 10         # max markets quoted simultaneously
+capital_usd                 = 750.0      # was 500 — more headroom for $30 stake
+daily_loss_alert_pct        = 0.40       # was 0.30 — more permissive alert
+daily_loss_pause_pct        = 9.99       # disabled
+max_quotes_concurrent       = 20         # was 10 — quote on more markets concurrently
 # shadow_mode does NOT exist for this strategy — direct quote emission.

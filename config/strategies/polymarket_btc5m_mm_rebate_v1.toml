@@ -1,8 +1,7 @@
-# mm_rebate_v1_btc5m — same MM strategy, BTC-updown 5m horizon.
-# Differences from BTC-15m TOML: window_seconds=300, tau_terminal_s=15.
+# mm_rebate_v1_btc5m — same MM strategy, BTC-updown 5m horizon. MORE AGGRESSIVE.
 
 name = "mm_rebate_v1_btc5m"
-description = "MM neutral en BTC-updown 5m, zona [0.25, 0.50). Paper soak agresivo."
+description = "MM neutral en BTC-updown 5m, zona [0.25, 0.50). Paper soak MORE-aggressive."
 
 [params]
 instance_name      = "mm_rebate_v1_btc5m"
@@ -13,26 +12,26 @@ zone_hi            = 0.50
 dead_zone_lo       = 0.50
 dead_zone_hi       = 0.55
 
-window_seconds         = 300     # 5-min market
-entry_window_start_s   = 30      # quote starting at t=30s (vs 60s for 15m — shorter window)
-tau_terminal_s         = 15      # 5m: stop quoting last 15s
+window_seconds         = 300
+entry_window_start_s   = 10      # was 30 — quote almost immediately
+tau_terminal_s         = 5       # was 15 — quote into the resolution edge
 
-gamma_inventory_risk   = 0.5
-spread_floor_bps       = 50
+gamma_inventory_risk   = 0.1     # was 0.5 — less risk-averse
+spread_floor_bps       = 25      # was 50 — tighter quotes
 spread_ceiling_bps     = 500
 
-stake_nominal_usd      = 20.0
+stake_nominal_usd      = 30.0    # was 20
 quote_ttl_seconds      = 0
 
 [sizing]
-stake_usd              = 20.0
+stake_usd              = 30.0
 kelly_fraction         = 0.25
 kelly_min_trades       = 50
-kelly_max_stake_usd    = 30.0
+kelly_max_stake_usd    = 50.0
 
 [backtest]
-earliest_entry_t_s     = 30
-latest_entry_t_s       = 285     # 300 - 15
+earliest_entry_t_s     = 10
+latest_entry_t_s       = 295
 window_seconds         = 300
 decision_interval_s    = 1
 
@@ -45,7 +44,7 @@ fee_k                  = 0.05
 [risk]
 bypass_in_backtest         = true
 cooldown_seconds           = 0
-max_position_size_usd      = 50.0
+max_position_size_usd      = 75.0
 daily_loss_limit_usd       = 9999.0
 daily_trade_limit          = 999999
 min_edge_bps               = 0
@@ -57,19 +56,19 @@ loss_pause_window_minutes  = 0
 loss_pause_duration_minutes = 0
 
 [mm_safety]
-inventory_cap_usdc           = 50.0
-cancel_fill_ratio_max        = 30.0
+inventory_cap_usdc           = 75.0
+cancel_fill_ratio_max        = 50.0
 cancel_fill_window_minutes   = 5
 cancel_fill_kill_threshold   = 2
 cancel_fill_kill_window_min  = 60
 cancel_fill_resume_min       = 15
 taker_fee_canary_pct         = 0.05
 taker_fee_canary_window_days = 7
-tau_terminal_s               = 15
+tau_terminal_s               = 5
 auto_kill_on_breach          = false
 
 [paper]
-capital_usd                 = 500.0
-daily_loss_alert_pct        = 0.30
+capital_usd                 = 750.0
+daily_loss_alert_pct        = 0.40
 daily_loss_pause_pct        = 9.99
-max_quotes_concurrent       = 10
+max_quotes_concurrent       = 20
