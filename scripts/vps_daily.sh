@@ -132,23 +132,28 @@ push_with_backoff() {
   return 0
 }
 
-log "git fetch + rebase onto origin/$BRANCH"
+log "git fetch + ff-merge onto origin/$BRANCH"
 git fetch origin "$BRANCH" || fail "git fetch failed"
 
 # Park local pollution (Claude Code edits to .claude/settings.json, stray
-# runbook edits, etc.) so the rebase doesn't refuse. Auto-popped after.
+# runbook edits, etc.) so checkout/merge don't refuse. Auto-popped after.
 STASHED=0
 if ! git diff --quiet || ! git diff --cached --quiet; then
   if git stash push --include-untracked -m "vps_daily auto-stash $(date -u +%Y-%m-%dT%H:%MZ)"; then
     STASHED=1
-    log "stashed dirty working tree before rebase"
+    log "stashed dirty working tree before merge"
   else
-    fail "git stash failed (working tree dirty, cannot rebase)"
+    fail "git stash failed (working tree dirty, cannot merge)"
   fi
 fi
 
 git checkout "$BRANCH" || fail "git checkout failed"
-git pull --rebase origin "$BRANCH" || fail "git pull --rebase failed"
+# Use ff-merge against the explicit ref instead of `pull --rebase`. The
+# latter reads FETCH_HEAD, which gets polluted by VSCode autofetch / worktree
+# operations and intermittently produces "Cannot rebase onto multiple
+# branches". At this point we have no local commits yet, so ff-only is the
+# correct semantics — divergence here is a real human-attention bug.
+git merge --ff-only "origin/$BRANCH" || fail "git merge --ff-only failed (local diverged from origin?)"
 
 if [ "$STASHED" -eq 1 ]; then
   if ! git stash pop; then
