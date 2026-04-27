@@ -45,7 +45,7 @@ The engine container runs **`paper_engine` by default** (not the backtest CLI). 
   - `features/` (micro, macro, mlofi, vpin, microprice, jumps) — every feature accepts an `as_of_ts` and must not peek forward; tests enforce this with synthetic ticks.
   - `walk_forward.py` — IS/OOS rolling driver (`research.walk_forward_runs` in DB).
 - `paper/` — `driver.py` orchestrates one `PaperDriver` per enabled strategy; `feeds.py` (Binance kline_1s master clock + Polymarket Chainlink oracle + CLOB WS); `tick_recorder.py` writes to `market_data.paper_ticks` and publishes Redis `tea:paper_ticks`; `exec_client.SimulatedExecutionClient` checks kill switch, rejects on stale book / late entry, applies fee model, persists to `trading.orders`/`trading.fills`.
-- `strategies/polymarket_btc5m/` — current strategy family. Live in paper: `last_90s_forecaster_v3` (active with declared gate-bypass), `trend_confirm_t1_v1`, and `oracle_lag_v1`. Helpers prefixed with `_` (`_lgb_runner.py`, `_microstructure_provider.py`, `_v2_features.py`, etc.) are shared modules — `_v2_features.py` is the canonical 21-feature builder reused by v3 and stays even though `v2.py` is gone.
+- `strategies/polymarket_btc5m/` — current strategy family. Live in paper: `last_90s_forecaster_v3` (active with declared gate-bypass), `trend_confirm_t1_v1`, and `oracle_lag_v1` (governed by ADR 0013 — its v2 maker-first variant was falsified 2026-04-27, ADR 0014 SUPERSEDED). Helpers prefixed with `_` are shared modules: `_lgb_runner.py` (LGBM wrapper), `_v2_features.py` (canonical 21-feature builder reused by v3, stays even though `v2.py` is gone), `_macro_provider.py` (5m candle cache feeding v3), `_microstructure_provider.py` (microstructure features for v3), `_oracle_lag_cesta.py` (Coinbase + USDT-basis cesta core of `oracle_lag_v1`), `_shared_providers.py`.
 - `cli/` — entrypoints: `backfill`, `backtest`, `mc`, `paper_engine`, `walk_forward`, `daily_report`, `paper_vs_backtest`, `train_last90s`, `train_hmm_regime`, `ingestor`.
 - `api/` — FastAPI + Jinja2 + HTMX + Alpine.js dashboard at `/research`, JSON API at `/api/v1/*`. Auth via `X-TEA-Token` header or `tea_token` cookie. The `/api/v1/llm/*` endpoints have NO function calling (ADR 0010).
 - `bots/telegram/` + `notifications/` — heartbeat watcher + interactive command poller. Cron jobs for daily report and Sunday paper-vs-backtest live in this container.
@@ -56,11 +56,11 @@ The engine container runs **`paper_engine` by default** (not the backtest CLI). 
 
 TimescaleDB. Three schemas:
 
-- `market_data` — `crypto_ohlcv`, `crypto_trades` (90d retention), `polymarket_prices`, `polymarket_trades` (180d), `polymarket_markets`, `paper_ticks` (30d). Hypertables on `ts`.
+- `market_data` — `crypto_ohlcv`, `crypto_trades` (90d retention), `polymarket_prices`, `polymarket_prices_history` (Polymarket Data API `/prices-history` backfill), `polymarket_trades` (180d), `polymarket_markets`, `paper_ticks` (30d). Hypertables on `ts`.
 - `trading` — `orders`, `fills`, `positions_snapshots`, `strategy_state` (paused state survives restart via Redis pub/sub on `tea:control:<strategy>`).
 - `research` — `backtests`, `backtest_trades`, `walk_forward_runs`, `paper_vs_backtest_comparisons`, `models` (`is_active` flips only when AUC ≥ 0.55 / Brier ≤ 0.245 / ECE ≤ 0.05, ADR 0011), `strategy_health`, `llm_conversations`.
 
-Init scripts: `infra/postgres/init/*.sql` (numbered `01…08`).
+Init scripts: `infra/postgres/init/*.sql` (numbered `01…13` — adds `09_contest_ab.sql` (table preserved post-cleanup of contest family), `10_grid_levels.sql`, `11_polymarket_prices_history.sql`, `12_mc_runs.sql`, `13_usdt_basis.sql`).
 
 ## Strategy contract — three parallel artifacts
 
@@ -75,6 +75,8 @@ config/strategies/<prefix>_<name>.toml   (sections: [params][sizing][backtest][f
 Adding a strategy requires editing the dispatch in **both** `cli/backtest.py` AND `cli/paper_engine.py` (ADR 0008 — no dynamic discovery on purpose). The `tea-strategy-template` skill enumerates every file to touch and the canonical TOML layout.
 
 State changes happen by **moving the `.md` file** between `en-desarrollo/`, `activas/`, `descartadas/`. Never delete a discarded strategy's `.md` — it's institutional learning.
+
+> **Drift caveat (2026-04-27):** the folder convention is aspirational — currently `activas/` is empty even though `last_90s_forecaster_v3` and `trend_confirm_t1_v1` are live in paper. INDICE.md flags both as "deuda institucional" (v3 .md still in `en-desarrollo/`; t1_v1 .md missing). When folder layout and INDICE disagree, **INDICE.md is the source of truth** for which strategies are active.
 
 `estrategias/INDICE.md` is the at-a-glance index (≤ 1 screen). Update it on every state change, at session **end** (not start).
 
