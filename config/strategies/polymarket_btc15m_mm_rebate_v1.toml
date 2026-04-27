@@ -1,0 +1,90 @@
+# mm_rebate_v1 — Avellaneda-Stoikov MM, BTC-updown 15m, below-zona only.
+# AGGRESSIVE PAPER soak per operator decision (skip shadow mode).
+# See estrategias/en-desarrollo/mm_rebate_v1.md and ADR 0015 (rebate erratum).
+
+name = "mm_rebate_v1"
+description = "MM neutral en BTC-updown 15m, zona [0.15, 0.40]. Paper soak agresivo."
+
+[params]
+# Active price zone (parametrizable; if Step 0 v2 changes the bucket nominee,
+# this is a config edit, not a code edit).
+zone_lo            = 0.15
+zone_hi            = 0.40
+dead_zone_lo       = 0.40
+dead_zone_hi       = 0.60
+
+# Time window inside each 15-min market.
+window_seconds         = 900
+entry_window_start_s   = 60     # quote starting at t=60s
+tau_terminal_s         = 30     # paper-aggressive: stop quoting last 30s (vs 60s conservador)
+
+# AS optimal-spread params.
+gamma_inventory_risk   = 0.5
+spread_floor_bps       = 50     # 0.5¢ minimum total spread
+spread_ceiling_bps     = 500    # safety cap at 5¢
+
+# Sizing (paper-aggressive: $20 stake = 4× oracle_lag_v1).
+stake_nominal_usd      = 20.0
+
+# Quote TTL (0 = GTC, cancelled on book-move via ReplaceQuote logic).
+quote_ttl_seconds      = 0
+
+[sizing]
+# Per-trade stake. Kelly disabled in V1; fixed stake until soak data accumulates.
+stake_usd              = 20.0
+kelly_fraction         = 0.25
+kelly_min_trades       = 50
+kelly_max_stake_usd    = 30.0
+
+[backtest]
+# These mirror direction-style strategies for parity at the driver layer.
+# mm_rebate_v1 is MM (continuous quoting), so the entry_t window is wide.
+earliest_entry_t_s     = 60
+latest_entry_t_s       = 870       # T - tau_terminal
+window_seconds         = 900
+decision_interval_s    = 1
+
+[fill_model]
+# Maker fills via limit_book_sim (DEFAULT_MAKER_FEE_BPS = 10).
+# fee_k below is taker-style, used only on forced-taker outflows
+# (inventory-cap liquidation, terminal-window cleanup).
+slippage_bps           = 0.0       # MM is maker-only; no taker slippage
+fill_probability       = 1.0       # limit_book_sim handles fill semantics
+apply_fee_in_backtest  = true
+fee_k                  = 0.05      # parabolic taker fee_k (only for forced flows)
+
+[risk]
+# RiskManager (existing; bypassable in backtest for parity).
+bypass_in_backtest         = true
+cooldown_seconds           = 0     # MM never cools off intentionally
+max_position_size_usd      = 50.0
+daily_loss_limit_usd       = 9999.0  # paper: do NOT auto-pause on PnL drawdown
+daily_trade_limit          = 999999
+min_edge_bps               = 0     # MM doesn't gate on directional edge
+min_z_score                = 0.0
+min_pm_depth_usd           = 5.0
+skip_if_spread_bps         = 999
+loss_pause_threshold_usd   = 0     # disabled
+loss_pause_window_minutes  = 0
+loss_pause_duration_minutes = 0
+
+[mm_safety]
+# MMSafetyGuard — NOT bypassable in backtest. Paper-aggressive thresholds.
+inventory_cap_usdc           = 50.0      # 5× conservative, 10× original q_max
+cancel_fill_ratio_max        = 30.0      # paper: see the ratio without prematurely killing
+cancel_fill_window_minutes   = 5
+cancel_fill_kill_threshold   = 2
+cancel_fill_kill_window_min  = 60
+cancel_fill_resume_min       = 15
+taker_fee_canary_pct         = 0.05      # 5% rolling 7d
+taker_fee_canary_window_days = 7
+tau_terminal_s               = 30
+auto_kill_on_breach          = false     # paper: alerts only, NO auto-kill
+
+[paper]
+# capital_at_risk = $500 (paper-aggressive: 5× single-strategy default).
+capital_usd                 = 500.0
+daily_loss_alert_pct        = 0.30       # alert at -30% drawdown (paper-permissive)
+daily_loss_pause_pct        = 9.99       # disabled — operator wants full drawdown signal
+max_quotes_concurrent       = 10         # max markets quoted simultaneously
+# shadow_mode does NOT exist for this strategy — direct quote emission.
