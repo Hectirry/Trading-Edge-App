@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
 from decimal import Decimal
 from time import time
 
@@ -129,7 +130,14 @@ def _extract_chainlink_price(data) -> float | None:
 
 async def run_clob_l2(state: FeedState) -> None:
     """Tracks bid/ask/depth per token. Reconciles on reconnect by pulling a
-    fresh book snapshot via CLOB REST for each known token."""
+    fresh book snapshot via CLOB REST for each known token.
+
+    Subscription model: initial subscribe on connect with all known tokens,
+    then incremental `subscribe` messages every ~5s when the refresh loop
+    has discovered new tokens (15m markets opened, etc.). This avoids
+    requiring a full reconnect to pick up new markets — important for 15m
+    markets that may live their entire window without the WS dropping.
+    """
     backoff = 1.0
     while True:
         try:
@@ -142,18 +150,45 @@ async def run_clob_l2(state: FeedState) -> None:
             async with websockets.connect(
                 CLOB_WS, ping_interval=20, ping_timeout=10, max_size=16 * 1024 * 1024
             ) as ws:
+                known_tokens: set[str] = set(tokens)
                 await ws.send(json.dumps({"type": "market", "assets_ids": tokens}))
                 log.info("paper.clob.ws.connected", tokens=len(tokens))
                 backoff = 1.0
-                async for raw in ws:
-                    try:
-                        msg = json.loads(raw)
-                    except Exception:
-                        continue
-                    events = msg if isinstance(msg, list) else [msg]
-                    async with state.lock:
-                        for ev in events:
-                            _apply_clob_event(ev, state)
+
+                async def _diff_subscribe_loop() -> None:
+                    """Background task: every 5 s, send incremental subscribe
+                    for newly-discovered tokens (15m markets, late 5m markets).
+                    """
+                    while True:
+                        await asyncio.sleep(5)
+                        cur = set(state.token_to_condition.keys())
+                        new = cur - known_tokens
+                        if new:
+                            await ws.send(
+                                json.dumps({"type": "market", "assets_ids": list(new)})
+                            )
+                            known_tokens.update(new)
+                            log.info(
+                                "paper.clob.ws.diff_subscribe",
+                                added=len(new),
+                                total=len(known_tokens),
+                            )
+
+                diff_task = asyncio.create_task(_diff_subscribe_loop())
+                try:
+                    async for raw in ws:
+                        try:
+                            msg = json.loads(raw)
+                        except Exception:
+                            continue
+                        events = msg if isinstance(msg, list) else [msg]
+                        async with state.lock:
+                            for ev in events:
+                                _apply_clob_event(ev, state)
+                finally:
+                    diff_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await diff_task
         except Exception as e:
             log.warning("paper.clob.ws.disconnect", err=str(e), backoff=backoff)
             await asyncio.sleep(backoff)
