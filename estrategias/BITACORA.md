@@ -8,6 +8,28 @@ Formato: `## YYYY-MM-DD — tema corto` + 1-5 líneas.
 
 ---
 
+## 2026-04-27 — oracle_lag_v2 descartada (ceiling test)
+
+Antes de invertir en el wiring `LimitBookSim ↔ SimulatedExecutionClient`
+(Sprint D+1 del ADR 0014), corrimos backtest A/B con asunción
+ideal-maker (fee=0, fill=100 %) sobre 8 días / 2118 markets en
+`polybot-agent.db`: v2 avg PnL/trade $0.68 vs v1 $11.96. **Gate #1
+de ADR 0014 (`v2 ≥ v1+1.5 ¢`) falla por orden de magnitud aun bajo
+el techo absoluto de la hipótesis.** Causa raíz: la señal Φ(δ/σ√τ) no
+es invariante en el tiempo dentro del market; ampliar la ventana de
+entrada a [60,297]s diluye el edge predictivo (a t=60s la incertidumbre
+del residual es ~3× mayor que a t=285s). Corolario: el rebate maker
+teórico era <0.5 % del PnL total de v1, no el +30-50 % proyectado.
+**Aprendizaje permanente**: una política de ejecución (taker→maker)
+no se evalúa como "mismo edge, fee distinta" — la ventana condiciona
+la calidad de la señal. ADR 0014 marcado SUPERSEDED. v1 queda como
+implementación canónica del residual sobre cesta multi-CEX. Limpieza
+del repo: borrados `oracle_lag_v2.py`, `pbt5m_oracle_lag_v2*.toml`,
+`test_oracle_lag_v2.py`, `engine/avellaneda_stoikov.py` + test (sin
+otros consumidores). Dispatch unhooked en backtest/paper_engine/mc.
+
+---
+
 ## 2026-04-26 — limpieza de estrategias muertas
 
 Eliminadas del repo: `last_90s_forecaster_v1`, `last_90s_forecaster_v2`,

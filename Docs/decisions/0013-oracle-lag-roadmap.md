@@ -35,7 +35,7 @@ Sprint 3  1d   USDT basis stream + table                 (infra)
 Sprint 4  2d   Phase 1 — cesta Binance/USDT + Coinbase   ← KILL lift<1pp ∨ pv≥0.05
 Sprint 5  3-4d Phase 1.5 — OKX + Kraken                  (optional, conditional)
 Sprint 6  ≥2w  paper shadow + promotion gate             (calendar-bound)
-Sprint 7  +1w  oracle_lag_v2 maker-first                  (deferred)
+Sprint 7  +1w  oracle_lag_v2 maker-first  (CANCELLED 2026-04-27 — falsified by ceiling test, see ADR 0014 SUPERSEDED)
 ```
 
 ### Kill-switch criteria (binding)

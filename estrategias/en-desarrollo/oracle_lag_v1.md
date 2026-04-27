@@ -698,3 +698,40 @@ Subagente entregó en worktree (`agent-aed162a2deaf2608b`). Integración manual:
 **No re-build necesario del engine para v2** — staging.toml sólo enabled
 v1. El build actual de tea-engine ya sirve para cuando v2 se active.
 
+
+### 2026-04-27 — v2 descartada (post-mortem)
+
+`oracle_lag_v2` falsificada por ceiling test antes de invertir en el
+wiring `LimitBookSim ↔ SimulatedExecutionClient`. Backtest A/B sobre
+2026-04-18 → 2026-04-26 (8 días, 2118 markets, polybot-agent.db) con
+asunción ideal-maker (fee=0, slippage=0, fill=100 %) dio:
+
+| Métrica           | v2 ceiling | v1 baseline |
+|-------------------|------------|-------------|
+| trades            | 1085       | 248         |
+| win rate          | 72.2 %     | 62.5 %      |
+| avg PnL/trade     | $0.68      | **$11.96**  |
+| total PnL         | $736.82    | **$2 967.19** |
+| sharpe/trade      | 0.33       | 0.47        |
+
+Gate ADR 0014 #1 (`v2 ≥ v1+1.5 ¢`) falla por orden de magnitud aun bajo
+el techo absoluto de la hipótesis. Causa: la señal Φ(δ/σ√τ) NO es
+invariante en el tiempo dentro del market — a t=60s la incertidumbre
+del residual es ~3× mayor que a t=285s, y esa pérdida de calidad de
+señal dominó cualquier ganancia del rebate. Bonus: el rebate teórico
+(1.5-3 ¢ × 248 trades v1) representaba **<0.5 % del PnL total de v1**,
+no el +30-50 % que proyectaba el ADR 0014.
+
+**Aprendizaje permanente** (también en BITACORA): un cambio de política
+de ejecución (taker→maker) no se evalúa como "mismo edge predictivo,
+fee distinta" — la política condiciona la ventana de entrada, y la
+ventana condiciona la calidad de la señal.
+
+Limpieza: borrados `oracle_lag_v2.py`, todos los `pbt5m_oracle_lag_v2*.toml`,
+`test_oracle_lag_v2.py`, `engine/avellaneda_stoikov.py` + test (sin otros
+consumidores), dispatchers en `cli/{backtest,mc,paper_engine}.py`,
+bloque `[strategies.oracle_lag_v2]` en `staging.toml`. ADR 0014
+SUPERSEDED. ADR 0013 Sprint 7 marcado CANCELLED. `.md` movida a
+`estrategias/descartadas/oracle_lag_v2.md` (preservada per
+`estrategias/README.md`). v1 queda como implementación canónica.
+

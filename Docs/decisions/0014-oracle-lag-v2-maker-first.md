@@ -1,18 +1,42 @@
 # ADR 0014 — `oracle_lag_v2` maker-first quoting (scaffolding)
 
 Date: 2026-04-26
-Status: Implemented (paper shadow, gate-bypass declared 2026-04-26)
+Status: SUPERSEDED 2026-04-27 (falsified by ceiling test, see top block)
 Scope: Phase 3.11 — follow-up to ADR 0013 / oracle_lag_v1
 
-> **2026-04-26 update — gate bypass declared by operator.** The original
+> **SUPERSEDED 2026-04-27 — falsified by ceiling test.** Ceiling A/B
+> backtest over 2026-04-18 → 2026-04-26 (8 days, 2118 markets,
+> `polybot-agent.db`) under ideal-maker assumption (fee=0, slippage=0,
+> fill=100 %) returned: v2 avg PnL/trade **$0.68** vs v1 **$11.96**.
+> Falsification Gate #1 of this ADR (`v2 ≥ v1 + 1.5 ¢`) **fails by an
+> order of magnitude** — even with the absolute upper bound of the
+> hypothesis, v2 captures ~5.7 % of v1's per-trade edge. Root cause:
+> the Φ(δ/σ√τ) signal is **not invariant in time within a market**.
+> Widening the entry window from [285,297]s to [60,297]s lets v2 quote
+> earlier but the residual at t=60s carries ~3× more uncertainty than
+> at t=285s, and that diluted-signal hit dwarfs the fee saving. Corollary:
+> the theoretical taker fee captured by v1 was <0.5 % of v1's total PnL,
+> not the +30-50 % projected here — this ADR overestimated the weight
+> of the taker fee by ~100×. **Permanent learning** (preserved in
+> BITACORA): an execution-policy change (taker→maker) cannot be
+> evaluated as "same predictive edge, different fee" — the policy
+> conditions the entry window, and the entry window conditions signal
+> quality. Code retired (oracle_lag_v2.py, TOMLs, tests,
+> avellaneda_stoikov.py + test, dispatch entries). v1 remains the
+> canonical implementation of the BS-digital residual on the multi-CEX
+> cesta.
+
+> **2026-04-26 update — gate bypass declared by operator** *(now
+> historical, see SUPERSEDED block above).* The original
 > "≥ 2 weeks of real paper-shadow operation of v1" precondition (see
-> § Decision below) is bypassed by explicit operator decision: v1 and
+> § Decision below) was bypassed by explicit operator decision: v1 and
 > v2 ship together, v2 in `[paper] shadow = true`. Rationale per
 > operator: "the impact of waiting two weeks for nothing is greater
-> than letting v2 observe in shadow now". v2 still defaults to
+> than letting v2 observe in shadow now". v2 still defaulted to
 > shadow because the cancel+place adapter on top of
-> `SimulatedExecutionClient` (see Sketch § 1) is not yet wired —
-> shadow=false requires that work plus the § Falsification gate.
+> `SimulatedExecutionClient` (see Sketch § 1) was not yet wired —
+> shadow=false would have required that work plus the § Falsification
+> gate. The ceiling test (above) made the wiring effort moot.
 
 ## Context
 

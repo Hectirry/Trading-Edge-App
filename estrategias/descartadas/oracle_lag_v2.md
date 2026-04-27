@@ -1,8 +1,9 @@
 # oracle_lag_v2
 
-Estado: `en-desarrollo`
+Estado: `descartada` (2026-04-27)
 Family: `polymarket_btc5m`
 Creada: 2026-04-26
+Descartada: 2026-04-27
 Autor: Hector + Claude
 
 ## Hipótesis
@@ -163,3 +164,46 @@ es que el maker camp es viable mucho antes que el window-end-snipe del
 taker. El A-S pricer queda como módulo puro reusable
 (`src/trading/engine/avellaneda_stoikov.py`) con golden-vector tests
 para regression-protect.
+
+### 2026-04-27 — Descartada
+
+**Falsificada por el ceiling test.** Antes de invertir en wiring
+`LimitBookSim ↔ SimulatedExecutionClient` (Sprint D+1), corrimos
+backtest A/B con asunción ideal-maker (fee=0, slippage=0, fill=100 %)
+sobre 2026-04-18 → 2026-04-26 (8 días, 2118 markets, polybot_sqlite
+`/btc-tendencia-data/polybot-agent.db`):
+
+| Métrica            | v2 ceiling   | v1 baseline | Δ |
+|--------------------|--------------|-------------|---|
+| trades             | 1085         | 248         | +4.4× |
+| win rate           | 72.2 %       | 62.5 %      | +10 pp |
+| total PnL          | $736.82      | $2 967.19   | −75 % |
+| **avg PnL/trade**  | **$0.68**    | **$11.96**  | **−$11.28** |
+| sharpe/trade       | 0.33         | 0.47        | −0.14 |
+
+**Gate ADR 0014 #1 (`PnL/share v2 ≥ v1 + 1.5 ¢`): FALLA por orden de
+magnitud.** Aun con asunción ideal-maker, v2 gana ~5.7 % de lo que
+gana v1 por trade.
+
+**Causa raíz**: la señal Φ(δ/σ√τ) NO es invariante en el tiempo dentro
+del market. El ADR 0014 implícitamente asumía que entrar a t=60s era
+equivalente a entrar a t=285s con menor fee. La realidad: a t=60s la
+incertidumbre del residual es ~3× mayor que a t=285s, lo que diluye
+el edge predictivo independientemente del modelo de fees.
+
+**Corolario sobre el peso del rebate**: el rebate teórico (1.5-3 ¢ ×
+248 trades v1) ≈ $7-15, vs los $2967.19 del PnL total de v1 = **<0.5 %
+del PnL**. El ADR 0014 sobreestimaba el peso del fee taker por ~100×.
+
+**Aprendizaje permanente**: una política de ejecución (taker→maker)
+no se puede evaluar como "mismo edge predictivo, fee distinta". La
+política de ejecución condiciona la ventana de entrada, y la ventana
+de entrada condiciona la calidad de la señal. Cualquier futura
+estrategia maker para polymarket_btc5m necesita una hipótesis de
+señal específica para la ventana extendida, no solo "v1 con menos fee".
+
+**Implementación correcta de la señal**: `oracle_lag_v1` se mantiene
+como la implementación canónica del residual Φ(δ/σ√τ) sobre cesta
+multi-CEX para Polymarket BTC up/down 5min markets.
+
+Commit: _(retiro completo en este commit)_.

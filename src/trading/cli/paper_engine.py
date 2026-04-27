@@ -90,12 +90,6 @@ async def _load_strategy(
 
         cesta = await _load_oracle_lag_cesta(cfg)
         return OracleLagV1(config=cfg, cesta=cesta)
-    if name == "oracle_lag_v2":
-        from trading.cli.backtest import _load_oracle_lag_cesta
-        from trading.strategies.polymarket_btc5m.oracle_lag_v2 import OracleLagV2
-
-        cesta = await _load_oracle_lag_cesta(cfg)
-        return OracleLagV2(config=cfg, cesta=cesta)
     if name == "last_90s_forecaster_v3":
         from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
             Last90sForecasterV3,
@@ -207,7 +201,7 @@ async def main_async() -> None:
             microstructure_provider=microstructure_provider,
         )
         if (
-            name in ("oracle_lag_v1", "oracle_lag_v2")
+            name == "oracle_lag_v1"
             and getattr(strategy, "cesta", None) is not None
         ):
             oracle_lag_cestas.append(strategy.cesta)

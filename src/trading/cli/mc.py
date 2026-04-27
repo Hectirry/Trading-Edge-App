@@ -111,12 +111,6 @@ async def _build_factory(name: str, config: dict, macro_provider):
 
         cesta = await _load_oracle_lag_cesta(config)
         return lambda: OracleLagV1(config=config, cesta=cesta)
-    if name == "polymarket_btc5m/oracle_lag_v2":
-        from trading.cli.backtest import _load_oracle_lag_cesta
-        from trading.strategies.polymarket_btc5m.oracle_lag_v2 import OracleLagV2
-
-        cesta = await _load_oracle_lag_cesta(config)
-        return lambda: OracleLagV2(config=config, cesta=cesta)
     if name == "polymarket_btc5m/last_90s_forecaster_v3":
         from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
             Last90sForecasterV3,

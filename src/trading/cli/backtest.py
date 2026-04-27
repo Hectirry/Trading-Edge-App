@@ -155,11 +155,6 @@ async def _load_strategy(name: str, config: dict, macro_provider):
 
         cesta = await _load_oracle_lag_cesta(config)
         return OracleLagV1(config=config, cesta=cesta)
-    if name == "polymarket_btc5m/oracle_lag_v2":
-        from trading.strategies.polymarket_btc5m.oracle_lag_v2 import OracleLagV2
-
-        cesta = await _load_oracle_lag_cesta(config)
-        return OracleLagV2(config=config, cesta=cesta)
     if name == "polymarket_btc5m/last_90s_forecaster_v3":
         from trading.strategies.polymarket_btc5m.last_90s_forecaster_v3 import (
             Last90sForecasterV3,

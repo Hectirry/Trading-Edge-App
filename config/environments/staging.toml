@@ -48,19 +48,6 @@ params_file = "config/strategies/pbt5m_bb_residual_ofi_v1.toml"
 enabled = true
 params_file = "config/strategies/pbt5m_oracle_lag_v1.toml"
 
-[strategies.oracle_lag_v2]
-# ADR 0014 — maker-first Avellaneda-Stoikov quoting on the same
-# scoring core as v1. Loaded by the engine in `shadow = true` (set
-# in pbt5m_oracle_lag_v2.toml [paper]) — operator gate-bypass on the
-# "≥ 2 weeks v1 paper-shadow" precondition declared 2026-04-26.
-# v2 emits ENTER signals but the cancel+place adapter on top of
-# SimulatedExecutionClient is not wired yet, so shadow stays on
-# until that lands. Flipping shadow=false requires the falsification
-# gate from ADR 0014 § Falsification (PnL/share v2 ≥ v1 + 1.5 ¢ AND
-# maker fill rate ≥ 40 %).
-enabled = true
-params_file = "config/strategies/pbt5m_oracle_lag_v2.toml"
-
 [deployment]
 service = "tea-engine"
 # staging: no confirmation file required.
