@@ -14,7 +14,6 @@ Orden: activas → en-desarrollo → descartadas. Mantener ≤ 1 pantalla.
 
 | nombre | family | último verdict | último resultado | resumen |
 |---|---|---|---|---|
-| bb_residual_ofi_v1 | polymarket_btc5m | falsificada (WF 4×5d, 2026-04-27) | 2026-04-27 04:22 UTC | WF Platt 4×5d: mean_auc 0.463, stability_index 0.25 (cap 0.60), lift vs v3 −19.6 pp; fold 1 anti-señal AUC 0.318. Falla criterios 1 y 4 del propio `.md`. v2 despromovido, engine reiniciado, `shadow_mode_no_model`. Pendiente mover a `descartadas/`. |
 | cvd_confirm_t2_v0 | polymarket_btc5m | — (doc-only) | — | CVD 1m como 7º gate de confirmación sobre trend_confirm_t1_v1. Solo `.md`; no hay `.py` ni `.toml` todavía. |
 | oracle_lag_v1 | polymarket_btc5m | edge_likely (paper_ticks) | 2026-04-26 | Cesta Binance/Coinbase + USDT basis + Φ(δ/σ√τ). 7 sprints completados (ADR 0013); Sharpe/trade 0.515 sobre paper_ticks 11h, permutation pv=0. Promovido 2026-04-26 a paper activo (shadow=false, stake $2). |
 
@@ -27,6 +26,7 @@ Orden: activas → en-desarrollo → descartadas. Mantener ≤ 1 pantalla.
 | last_90s_forecaster_v2_bbres | polymarket_btc5m | falsificado 2x — labels biased y limpias | Lift 0.000 pp AUC en ambos regímenes; construcción colapsada por hardcoding de `implied_prob_yes` en training. Re-abrir requiere libro PM histórico ingerido al training. |
 | last_90s_forecaster_v1 / v2 / contest_ensemble_v1 / contest_avengers_v1 | polymarket_btc5m | eliminadas 2026-04-26 por decisión del usuario | v1 WR 28.7 % positivo por payoff asimétrico, no edge real. v2 reemplazada por v3 (mismo trainer, +5 microstructure features). contest_ensemble_v1 PnL -$260 / Sharpe negativo. contest_avengers_v1 0 trades. Código + configs + tests + dashboard contest_ab + ADR 0012 (superseded) limpiados. `LGBRunner` extraído a `_lgb_runner.py`. |
 | oracle_lag_v2 | polymarket_btc5m | falsificada 2026-04-27 — ceiling test | Maker-first Avellaneda-Stoikov sobre el scoring core de v1 (ADR 0014, SUPERSEDED). Backtest A/B 8 días, 2118 markets, asunción ideal-maker (fee=0, fill=100 %): v2 avg PnL/trade $0.68 vs v1 $11.96 → gate ADR 0014 (#1: ≥ v1+1.5 ¢) falla por orden de magnitud. La señal Φ(δ/σ√τ) no es invariante en el tiempo dentro del market; ampliar window 60-297s degrada selectividad. v1 queda como implementación correcta. |
+| bb_residual_ofi_v1 | polymarket_btc5m | falsificada 2026-04-27 — 3 corridas WF independientes | Hipótesis "Polymarket retrasa Binance + microstructure explotable BTC-updown-5m". Original WF 4×5d Platt: stab_idx 0.25, lift −19.6 pp vs v3, fold 1 invertido (AUC 0.318). Resurrection batch 27-abr (late-window t=270 + HMM regime t=210): ambos degradan stab_idx a 0.00, fold mid-abril sigue invertido en las 3 configs. Inestabilidad estructural entre regímenes, no curable por sample timing ni regime feature. Cero impacto económico (siempre shadow). |
 
 ---
 

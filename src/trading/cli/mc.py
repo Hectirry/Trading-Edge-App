@@ -121,16 +121,6 @@ async def _build_factory(name: str, config: dict, macro_provider):
 
         runner = await v3_load_runner_async()
         return lambda: Last90sForecasterV3(config, macro_provider=macro_provider, model=runner)
-    if name == "polymarket_btc5m/bb_residual_ofi_v1":
-        from trading.strategies.polymarket_btc5m.bb_residual_ofi_v1 import (
-            BBResidualOFIV1,
-        )
-        from trading.strategies.polymarket_btc5m.bb_residual_ofi_v1 import (
-            load_runner_async as bb_ofi_load_runner_async,
-        )
-
-        runner = await bb_ofi_load_runner_async()
-        return lambda: BBResidualOFIV1(config, model=runner)
     raise SystemExit(f"unknown strategy: {name}")
 
 

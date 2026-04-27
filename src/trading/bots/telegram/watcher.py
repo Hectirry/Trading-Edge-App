@@ -94,7 +94,6 @@ class Watcher:
         strategies = [
             "hmm_regime_btc5m",
             "last_90s_forecaster_v3",
-            "bb_residual_ofi_v1",
             "trend_confirm_t1_v1",
         ]
         while True:

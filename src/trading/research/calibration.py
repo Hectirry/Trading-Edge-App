@@ -2,12 +2,11 @@
 they swap in for ``IsotonicRegression`` at the runner layer
 (``_lgb_runner.LGBRunner``) without touching the inference code.
 
-Why Platt instead of isotonic for bb_residual_ofi_v1: the 2026-04-26
-ensemble runs showed isotonic memorising val (ECE val ≈ 1e-17) and
-exploding on test (ECE 0.39). One degree of freedom (sigmoid) is
-strictly less overfit-prone than the piecewise-constant fit of
-isotonic, especially on the small val sets we get inside walk-forward
-folds.
+Why Platt is offered as an alternative to isotonic: in the 2026-04-26
+bb_ofi ensemble runs (strategy since discarded) isotonic memorised
+val (ECE val ≈ 1e-17) and exploded on test (ECE 0.39). One degree of
+freedom (sigmoid) is strictly less overfit-prone than piecewise-constant
+isotonic, especially on the small val sets walk-forward folds yield.
 """
 
 from __future__ import annotations
@@ -32,8 +31,8 @@ class PlattCalibrator:
 
 def fit_platt(val_probs, y_val) -> PlattCalibrator:
     """Fit Platt scaling on raw model probabilities. Used by
-    ``train_last90s.train`` and ``train_bb_ofi_ensemble`` when the
-    caller passes ``calibration='platt'``."""
+    ``train_last90s.train`` when the caller passes
+    ``calibration='platt'``."""
     import numpy as np
     from sklearn.linear_model import LogisticRegression
 

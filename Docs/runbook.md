@@ -840,9 +840,8 @@ shadow mode (SKIPs every ENTER, logs features + probs for analysis).
 
 Unified CLI `trading.cli.walk_forward`. Two execution paths inside:
 
-- ML (`hmm_regime_btc5m`, `last_90s_forecaster_v3`,
-  `bb_residual_ofi_v1`) — refit the model on each IS window and
-  evaluate AUC/Brier on OOS.
+- ML (`hmm_regime_btc5m`, `last_90s_forecaster_v3`) — refit the model
+  on each IS window and evaluate AUC/Brier on OOS.
 - Rules (`trend_confirm_t1_v1`) — replay via the Phase-2
   `run_walk_forward` infrastructure over polybot SQLite, measuring
   trade count + PnL per fold.

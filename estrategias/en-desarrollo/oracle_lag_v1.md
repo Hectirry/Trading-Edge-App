@@ -491,9 +491,9 @@ heartbeat fresh / OK`. Logs confirman:
 - `paper_engine.strategy.enabled name=oracle_lag_v1`
 - `paper.driver.started strategy=oracle_lag_v1 paused=false`
 
-4 estrategias activas en paralelo en paper:
+4 estrategias activas en paralelo en paper (al momento de la promoción):
 `trend_confirm_t1_v1`, `last_90s_forecaster_v3`, `bb_residual_ofi_v1`
-(shadow), `oracle_lag_v1` (active, primera vez).
+(shadow — descartada el 2026-04-27), `oracle_lag_v1` (active, primera vez).
 
 **Reversa documentada**: `sed -i 's/shadow = false/shadow = true/'
 config/strategies/pbt5m_oracle_lag_v1.toml` + rebuild + restart, o

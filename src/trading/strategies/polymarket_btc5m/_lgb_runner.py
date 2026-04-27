@@ -1,6 +1,6 @@
-"""Shared LightGBM runner used by last_90s_forecaster_v3 and
-bb_residual_ofi_v1. Originally lived in last_90s_forecaster_v2; lifted
-out so v2/v1/contest_* could be deleted without breaking v3.
+"""Shared LightGBM runner used by last_90s_forecaster_v3. Originally
+lived in last_90s_forecaster_v2; lifted out so v2/v1/contest_* could be
+deleted without breaking v3.
 
 Hard guard against silent feature-count drift (train/serve mismatch):
 ``predict_proba`` raises if the input vector length does not match

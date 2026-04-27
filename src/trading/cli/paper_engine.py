@@ -105,16 +105,6 @@ async def _load_strategy(
             model=runner,
             microstructure_provider=microstructure_provider,
         )
-    if name == "bb_residual_ofi_v1":
-        from trading.strategies.polymarket_btc5m.bb_residual_ofi_v1 import (
-            BBResidualOFIV1,
-        )
-        from trading.strategies.polymarket_btc5m.bb_residual_ofi_v1 import (
-            load_runner_async as bb_ofi_load_runner_async,
-        )
-
-        runner = await bb_ofi_load_runner_async()
-        return BBResidualOFIV1(cfg, model=runner)
     raise RuntimeError(f"unknown strategy: {name}")
 
 

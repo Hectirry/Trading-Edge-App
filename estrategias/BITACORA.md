@@ -8,6 +8,36 @@ Formato: `## YYYY-MM-DD — tema corto` + 1-5 líneas.
 
 ---
 
+## 2026-04-27 — bb_residual_ofi_v1 descartada (resurrection batch falla)
+
+Tras la falsificación matinal del 27-abr (entrada inmediatamente
+debajo) corrimos un batch autónomo (`scripts/bb_ofi_resurrect_batch.py`,
+ahora eliminado) con 2 palancas de rescate:
+
+- **Exp A — late-window**: sample at t=270 s en lugar de t=210.
+- **Exp B — HMM regime feature**: sample t=210 + 4 posteriors del
+  detector `hmm_regime_btc5m` activo, training-only.
+
+WF 3 × 7 d, ventana 35 d, n=8474, Platt, Optuna 30 / 180 s, seed=42.
+Ambos **degradan** stability_index a **0.00** (peor que la corrida
+original 0.25). Patrón consistente: fold mid-abril invierte señal
+(AUC 0.32-0.42) en las 3 configs independientes. La inestabilidad
+es estructural del feature set entre regímenes; sample timing y
+regime posterior no la curan.
+
+Decisión: estrategia descartada por sus propias reglas (criterio 4,
+`stability_index < 0.6`), confirmada con n=3 corridas. `.md` movido
+a `descartadas/` con sección final que documenta este batch. Phase
+A-I del protocolo `tea-strategy-removal` ejecutado: `enabled=false`
++ deploy + verify; código + TOML + tests + dispatch en
+backtest/paper_engine/mc/walk_forward + helper `_bb_ofi_features.py`
++ training CLIs + dashboard/watcher/resurrect scripts eliminados;
+docstrings de `_lgb_runner` y `calibration` actualizados.
+
+**Lo que sobrevive**: `PlattCalibrator` en `research/calibration.py`
+y el patrón WF expandente en `train_last90s.train()`. Modelos en
+`research.models` (5 rows) quedan en histórico, todos `is_active=false`.
+
 ## 2026-04-27 — bb_residual_ofi_v1 falsificada por walk-forward (Platt)
 
 Cierre del ciclo bb_ofi. Cambios introducidos antes de evaluar:

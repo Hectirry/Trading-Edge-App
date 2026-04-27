@@ -5,10 +5,9 @@ One entry point for every strategy. Two execution paths:
 - **Rules-based** (``trend_confirm_t1_v1``) runs the Phase-2
   ``run_walk_forward`` replay infrastructure over polybot SQLite dumps —
   deterministic trade replay, PnL + verdict per fold.
-- **ML-based** (``hmm_regime_btc5m``, ``last_90s_forecaster_v3``,
-  ``bb_residual_ofi_v1``) refits the model on each IS window and
-  evaluates AUC / Brier on the OOS window via the new
-  ``trading.research.walk_forward`` core.
+- **ML-based** (``hmm_regime_btc5m``, ``last_90s_forecaster_v3``)
+  refits the model on each IS window and evaluates AUC / Brier on the
+  OOS window via the new ``trading.research.walk_forward`` core.
 
 Results are written to ``research.walk_forward_runs`` (existing from
 Phase 2) with per-fold details in ``splits`` JSONB and the aggregate
@@ -56,7 +55,6 @@ log = get_logger("cli.walk_forward")
 ML_STRATEGIES = {
     "hmm_regime_btc5m",
     "last_90s_forecaster_v3",
-    "bb_residual_ofi_v1",
 }
 
 RULE_STRATEGIES = {
@@ -86,8 +84,6 @@ async def _evaluate_fold_ml(strategy: str, fold: FoldWindow) -> dict:
         return await _eval_hmm_fold(fold)
     if strategy == "last_90s_forecaster_v3":
         return await _eval_last_90s_v3_fold(fold)
-    if strategy == "bb_residual_ofi_v1":
-        return await _eval_bb_ofi_ensemble_fold(fold)
     raise RuntimeError(f"no ML trainer for {strategy}")
 
 
@@ -269,122 +265,6 @@ async def _eval_last_90s_v3_fold(fold: FoldWindow) -> dict:
         "auc_oos": auc_oos,
         "brier_oos": brier_oos,
         "n_trades_oos": len(oos_samples),
-        "pnl_oos": None,
-        "verdict": verdict,
-    }
-
-
-async def _eval_bb_ofi_ensemble_fold(fold: FoldWindow) -> dict:
-    """Walk-forward fold for bb_residual_ofi_v1 *as an ensemble*. Each
-    fold trains a small bagging ensemble (3 members, 20 trials/each)
-    on the IS window using the same data assembly as the production
-    trainer (postgres polymarket_markets universe + crypto_trades 1Hz
-    spots + real implied_prob_yes), then evaluates on the OOS window
-    using the ensemble *mean* prediction post-isotonic-calibration.
-
-    Why ensemble in WF: serving uses the ensemble mean as p_edge and
-    the cross-member stddev as the Sharpe denominator. WF metrics on
-    a single member would over-estimate per-fold variance and
-    under-estimate the production model's realised AUC. 3 members is
-    a wall-clock compromise (full prod uses 7).
-    """
-    from pathlib import Path as _Path
-
-    from trading.cli.train_bb_ofi import (
-        _load_settled_markets_from_pg,
-        build_samples,
-    )
-    from trading.cli.train_bb_ofi_ensemble import _train_ensemble
-
-    pg_dsn = _pg_dsn()
-
-    # Markets resolved within IS+OOS combined; we then split by close_ts.
-    t_lo = min(fold.is_from, fold.oos_from)
-    t_hi = max(fold.is_to, fold.oos_to)
-    all_markets = _load_settled_markets_from_pg(pg_dsn, t_lo, t_hi)
-
-    def _in(m, a, b):
-        return a.timestamp() <= float(m["close_ts"]) <= b.timestamp()
-
-    is_markets = [m for m in all_markets if _in(m, fold.is_from, fold.is_to)]
-    oos_markets = [m for m in all_markets if _in(m, fold.oos_from, fold.oos_to)]
-    if len(is_markets) < 100 or len(oos_markets) < 30:
-        return _unvalidated_fold(
-            fold,
-            n_trades_oos=len(oos_markets),
-            note=f"is_markets={len(is_markets)} oos_markets={len(oos_markets)}",
-        )
-
-    # build_samples requires a sqlite source path even when we use the
-    # crypto_trades spots route — pass the polybot-agent snapshot path
-    # if available; the function will tolerate a stale/empty SQLite as
-    # long as `spots_source='crypto_trades'`.
-    polybot_agent = _Path("/btc-tendencia-data/polybot-agent.db")
-    sqlite_sources = [polybot_agent] if polybot_agent.exists() else []
-
-    is_samples = build_samples(
-        is_markets,
-        sqlite_sources=sqlite_sources,
-        pg_dsn=pg_dsn,
-        use_real_implied_prob=True,
-        microstructure_window_s=90,
-        large_threshold_usd=100_000.0,
-        spots_source="crypto_trades",
-    )
-    oos_samples = build_samples(
-        oos_markets,
-        sqlite_sources=sqlite_sources,
-        pg_dsn=pg_dsn,
-        use_real_implied_prob=True,
-        microstructure_window_s=90,
-        large_threshold_usd=100_000.0,
-        spots_source="crypto_trades",
-    )
-    if len(is_samples) < 80 or len(oos_samples) < 25:
-        return _unvalidated_fold(
-            fold,
-            n_trades_oos=len(oos_samples),
-            note=f"post-feature-build is={len(is_samples)} oos={len(oos_samples)}",
-        )
-
-    trained = _train_ensemble(
-        is_samples,
-        n_members=3,
-        optuna_trials=20,
-        time_budget_s=120,
-        base_seed=42,
-    )
-
-    import numpy as np
-    from sklearn.metrics import brier_score_loss, roc_auc_score
-
-    X_oos = np.asarray([s.features for s in oos_samples], dtype=np.float64)
-    y_oos = np.asarray([s.label for s in oos_samples], dtype=np.int32)
-    member_probs = np.asarray([b.predict(X_oos) for b, _p, _n in trained["members"]])
-    oos_mean_raw = member_probs.mean(axis=0)
-    oos_calibrated = trained["calibrator"].predict(oos_mean_raw)
-
-    auc_oos = float(roc_auc_score(y_oos, oos_calibrated)) if len(set(y_oos)) == 2 else None
-    brier_oos = float(brier_score_loss(y_oos, oos_calibrated))
-    auc_is = trained["metrics"].get("test_auc")
-    verdict = classify_fold(
-        auc_is=auc_is,
-        auc_oos=auc_oos,
-        n_trades_oos=len(oos_samples),
-    )
-    return {
-        "fold": fold.idx,
-        "is_from": fold.is_from.isoformat(),
-        "is_to": fold.is_to.isoformat(),
-        "oos_from": fold.oos_from.isoformat(),
-        "oos_to": fold.oos_to.isoformat(),
-        "auc_is": auc_is,
-        "auc_oos": auc_oos,
-        "brier_oos": brier_oos,
-        "n_trades_oos": len(oos_samples),
-        "n_trades_is": len(is_samples),
-        "ensemble_members": 3,
-        "test_stddev_mean": trained["test_stddev_summary"]["mean"],
         "pnl_oos": None,
         "verdict": verdict,
     }

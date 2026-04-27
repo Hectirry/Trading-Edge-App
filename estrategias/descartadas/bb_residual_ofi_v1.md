@@ -1,8 +1,9 @@
 # bb_residual_ofi_v1
 
-Estado: `en-desarrollo`
+Estado: `descartada`
 Family: `polymarket_btc5m`
 Creada: 2026-04-25
+Descartada: 2026-04-27
 Autor: Hector + Claude
 
 ## Hipótesis
@@ -118,6 +119,58 @@ Cualquiera de estos mata la hipótesis:
    Boot shadow ya activo via TOML `paper.shadow=true`.
 
 ## Resultados
+
+### 2026-04-27 — Descartada (post-resurrección 2 palancas)
+
+Tras la falsificación 4×5 d del 27-abr (más abajo), se ejecutó un
+batch autónomo (`scripts/bb_ofi_resurrect_batch.py`) con 2 palancas
+diseñadas específicamente para atacar la inestabilidad mid-abril:
+
+- **Exp A — late-window**: sample at t=270 s (rama "now-or-never").
+- **Exp B — HMM regime**: sample at t=210 s + 4 posteriors del
+  detector `hmm_regime_btc5m` activo, training-only.
+
+Walk-forward 3 × 7 d, ventana 2026-03-22 → 2026-04-26, 8 474 samples,
+calibración Platt, Optuna 30 trials × 180 s, seed=42.
+
+| experimento | mean_auc | stab_idx | mean_brier | fold 0 | fold 1 | fold 2 |
+|---|---:|---:|---:|---:|---:|---:|
+| original 4×5d (07:00 UTC) | 0.463 | 0.25 | 0.304 | 0.589 | **0.318** | 0.456 |
+| **Exp A late t=270**     | 0.500 | **0.00** | 0.273 | 0.538 | **0.416** | 0.547 |
+| **Exp B regime t=210**   | 0.466 | **0.00** | 0.286 | 0.544 | **0.408** | 0.445 |
+
+Ambos experimentos **degradan** `stability_index` (de 0.25 → 0.00) y
+ningún criterio del gate (stab ≥ 0.6, lift +5 pp vs v3, brier ≤ 0.265)
+se cumple. Más importante: **el fold mid-abril sigue invertido en las
+3 configs independientes** (AUC 0.32-0.42, n_test=1440-2011). La
+inversión no es ruido de muestra ni problema de calibración — es
+inestabilidad estructural del feature set entre regímenes.
+
+Detalle digno: Exp B fold 0 logró Brier 0.218 / ECE 0.074 (pasaría
+gate de calibración), pero el fold 1 colapsa igual. Cuando hay señal,
+el regime feature calibra mejor; cuando el régimen futuro no se
+parece al de entrenamiento, el modelo se invierte.
+
+Decisión: la hipótesis "Polymarket retrasa Binance + microstructure
+explotable en BTC-updown-5m" queda **falsificada por 3 corridas
+independientes** con sus propias reglas (`stability_index < 0.6`).
+Cero impacto económico durante el ciclo (siempre en shadow
+o `shadow_mode_no_model`).
+
+Lo que **sobrevive** para futuras estrategias:
+
+- `train_bb_ofi.py` con WF expandente + Platt — patrón canónico.
+  Se elimina junto a la estrategia, pero el patrón está documentado
+  en BITACORA y reproducible desde `train_last90s.train()`.
+- `PlattCalibrator` en `src/trading/research/calibration.py` —
+  reusable, se queda.
+- `scripts/bb_ofi_resurrect_batch.py` — patrón de batch autónomo
+  con HMM regime injection training-only. Se elimina junto a la
+  estrategia; referenciar en BITACORA.
+
+Resultados del batch persistidos en
+`/app/models/bb_residual_ofi_v1/resurrect_results.json` dentro del
+named volume `tea_models` antes del rm de Phase C.
 
 ### 2026-04-27 — walk-forward 4 × 5 d (Platt) → falsificada
 
