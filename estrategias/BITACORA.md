@@ -8,6 +8,41 @@ Formato: `## YYYY-MM-DD — tema corto` + 1-5 líneas.
 
 ---
 
+## 2026-04-27 — bb_residual_ofi_v1 falsificada por walk-forward (Platt)
+
+Cierre del ciclo bb_ofi. Cambios introducidos antes de evaluar:
+isotónica → Platt en `train_last90s.train()` (vía nuevo flag
+`--calibration`) y en `train_bb_ofi_ensemble`; helper en
+`src/trading/research/calibration.py`. Trainer extendido con
+`--walk-forward --wf-folds N --wf-fold-days D`. v2
+(`bb_ofi_2026-04-26T02-46-53Z`) despromovido en
+`research.models` por SQL (ECE 0.215, 4× sobre cap ADR 0011).
+Engine reiniciado 04:23 UTC; bb_ofi en `shadow_mode_no_model`.
+
+Run: 35 d, n=8305, 4 × 5 d, 25 trials / 180 s, Platt.
+
+| fold | AUC | Brier | ECE |
+|---|---:|---:|---:|
+| 0 | 0.589 | 0.281 | 0.182 |
+| 1 | **0.318** | 0.370 | 0.373 |
+| 2 | 0.456 | 0.321 | 0.262 |
+| 3 | 0.488 | 0.244 | 0.050 |
+
+mean_auc 0.463, stability_index **0.25** (cap 0.60), lift vs v3
+(0.659) = **−19.6 pp**. Falla criterios 1 y 4 del propio `.md`.
+Fold 1 AUC 0.318 = anti-señal: el modelo predice al revés en esa
+ventana. Confirma que el AUC 0.597 del split sequential del 26-abr
+era artefacto de ventana, no señal generalizable. Platt no salva
+modelos con AUC < 0.5 — confirma que el problema es feature set,
+no calibrador.
+
+Decisión: pendiente confirmación del usuario para mover `.md` a
+`descartadas/` y desmontar dispatch + staging.toml + tests via
+`tea-strategy-removal`. v2 ya inerte (no-active-row).
+
+Lo que sobrevive: pipeline WF reusable para futuras estrategias
+del family; `PlattCalibrator` con `.predict([p])` API.
+
 ## 2026-04-27 — oracle_lag_v2 descartada (ceiling test)
 
 Antes de invertir en el wiring `LimitBookSim ↔ SimulatedExecutionClient`

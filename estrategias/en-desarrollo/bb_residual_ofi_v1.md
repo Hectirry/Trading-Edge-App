@@ -119,6 +119,79 @@ Cualquiera de estos mata la hipótesis:
 
 ## Resultados
 
+### 2026-04-27 — walk-forward 4 × 5 d (Platt) → falsificada
+
+Tras la lectura honesta del 26-abr (AUC 0.597 con n_test=397, lift
+−6 pp vs v3, ECE 0.215 con override SQL) decidimos correr walk-forward
+expandente con calibración Platt antes de seguir invirtiendo cómputo.
+
+Cambios introducidos:
+
+1. `train_bb_ofi.py` ahora soporta `--walk-forward --wf-folds N
+   --wf-fold-days D`. Eval expandente: cada fold k entrena con todos
+   los samples cuyo `close_ts < test_window_start`, evalúa los próximos
+   `D` días. Folds con n_train < 200 o n_test < 30 se saltan.
+2. Isotónica → Platt en `train_last90s.train()` (vía `--calibration`)
+   y en `train_bb_ofi_ensemble._train_ensemble`. Helper en
+   `src/trading/research/calibration.py` (`PlattCalibrator` con
+   API `.predict([p])` compatible con `LGBRunner`).
+3. v2 (`bb_ofi_2026-04-26T02-46-53Z`) despromovido — `is_active=false`
+   por SQL. Engine reiniciado 2026-04-27T04:23 UTC; bb_ofi entra en
+   `shadow_mode_no_model`.
+
+Run: ventana 2026-03-23 → 2026-04-26 (35 d), n_samples=8305 (markets
+de PG, spots de `crypto_trades`), 4 folds × 5 d, Optuna 25 trials /
+180 s budget, seed=42, calibración Platt.
+
+| fold | ventana test | n_train | n_test | AUC | Brier | ECE |
+|---|---|---:|---:|---:|---:|---:|
+| 0 | 04-04 → 04-09 | 3451 | 1436 | 0.589 | 0.281 | 0.182 |
+| 1 | 04-09 → 04-14 | 4887 | 1440 | **0.318** | 0.370 | 0.373 |
+| 2 | 04-14 → 04-19 | 6327 | 1435 | 0.456 | 0.321 | 0.262 |
+| 3 | 04-19 → 04-24 | 7762 |  542 | 0.488 | 0.244 | 0.050 |
+
+**Summary:** mean_auc 0.463, std_auc 0.097, min_auc 0.318,
+mean_brier 0.304, mean_ece 0.217, **stability_index 0.25** (1/4 folds
+con AUC ≥ 0.55).
+
+#### Lectura
+
+- **Falsificación criterio 4** (regla propia): `stability_index = 0.25`,
+  cap = 0.60. Falla por 2.4×.
+- **Falsificación criterio 1**: lift AUC vs v3 (0.659) = **−19.6 pp**,
+  no +5 pp.
+- **Fold 1 con AUC 0.318** es señal **invertida** — el modelo predice
+  exactamente lo contrario en una ventana de 5 días. Eso no es ruido
+  de muestra pequeña (n_test=1440); es fragilidad de feature set
+  entre regímenes.
+- **Platt no salva nada cuando AUC < 0.5.** Confirma que el problema
+  era de modelo, no de calibrador. La lectura del 26-abr (lift
+  negativo vs v3) ya lo apuntaba; el WF lo cierra.
+- **El AUC 0.597 del split sequential del 26-abr era artefacto** de
+  la ventana específica (los últimos 5 días resultaron parecidos al
+  fold 0 actual, AUC 0.589). Los otros 3 folds enseñan que esa
+  configuración no generaliza.
+
+#### Decisión
+
+Por sus propias reglas, esta hipótesis está **muerta**. Pendiente de
+confirmación del usuario para mover el `.md` a `descartadas/` y
+limpiar dispatch + staging.toml + tests vía protocolo
+`tea-strategy-removal`. Mientras tanto: v2 despromovido, engine
+reiniciado, bb_ofi corriendo en `shadow_mode_no_model` (cero impacto
+económico).
+
+#### Lo que sobrevive (para futuras estrategias del family)
+
+- Pipeline `train_bb_ofi` con walk-forward eval reusable: cualquier
+  estrategia que reuse `Sample` con `close_ts` puede invocar
+  `--walk-forward`. Es el patrón canónico ahora.
+- Calibración Platt como default — el sentinel `IsotonicRegression`
+  de `train_last90s` quedó atrás del flag `--calibration isotonic`
+  (default `platt` para bb_ofi, `isotonic` para v3).
+- `PlattCalibrator` en `src/trading/research/calibration.py` con
+  API pickle-load-compatible para el runner.
+
 ### 2026-04-26 — segundo training, escala 16×
 
 Tras el primer training (n=164) detectamos que el bottleneck no era

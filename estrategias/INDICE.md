@@ -14,7 +14,7 @@ Orden: activas → en-desarrollo → descartadas. Mantener ≤ 1 pantalla.
 
 | nombre | family | último verdict | último resultado | resumen |
 |---|---|---|---|---|
-| bb_residual_ofi_v1 | polymarket_btc5m | — | — | BB no-drift prior + OFI/microestructura ensemble shrinkage; Sharpe-gated, fee convexa. Shadow scaffold (sin modelo entrenado). |
+| bb_residual_ofi_v1 | polymarket_btc5m | falsificada (WF 4×5d, 2026-04-27) | 2026-04-27 04:22 UTC | WF Platt 4×5d: mean_auc 0.463, stability_index 0.25 (cap 0.60), lift vs v3 −19.6 pp; fold 1 anti-señal AUC 0.318. Falla criterios 1 y 4 del propio `.md`. v2 despromovido, engine reiniciado, `shadow_mode_no_model`. Pendiente mover a `descartadas/`. |
 | cvd_confirm_t2_v0 | polymarket_btc5m | — (doc-only) | — | CVD 1m como 7º gate de confirmación sobre trend_confirm_t1_v1. Solo `.md`; no hay `.py` ni `.toml` todavía. |
 | oracle_lag_v1 | polymarket_btc5m | edge_likely (paper_ticks) | 2026-04-26 | Cesta Binance/Coinbase + USDT basis + Φ(δ/σ√τ). 7 sprints completados (ADR 0013); Sharpe/trade 0.515 sobre paper_ticks 11h, permutation pv=0. Promovido 2026-04-26 a paper activo (shadow=false, stake $2). |
 
