@@ -331,7 +331,12 @@ async def _refresh_once_15m(client: httpx.AsyncClient, state: FeedState) -> None
                     continue
                 for m in ev.get("markets") or []:
                     slug = m.get("slug") or ev.get("slug")
-                    if not slug or not slug.startswith("btc-updown-15m-"):
+                    # Accept BOTH btc-updown-15m AND eth-updown-15m. Both
+                    # families lack a numeric series_id and must be slug-prefix
+                    # filtered on this global pagination path.
+                    if not slug or not (
+                        slug.startswith("btc-updown-15m-") or slug.startswith("eth-updown-15m-")
+                    ):
                         continue
                     try:
                         close_ts = int(slug.rsplit("-", 1)[-1])
@@ -378,6 +383,20 @@ async def _refresh_once_15m(client: httpx.AsyncClient, state: FeedState) -> None
 
 
 async def _refresh_once(client: httpx.AsyncClient, state: FeedState) -> None:
+    """Refresh the 5m families subscribed by the paper engine: BTC-5m
+    (series_id=10684) and ETH-5m (series_id=10683). Each in turn — both
+    write into the same `state.markets` map, distinguishable by their
+    slug prefix. mm_rebate_v1 instances filter by slug_pattern, so the
+    direction-style strategies (BTC-only) ignore ETH ticks via their
+    own per-strategy slug filter.
+    """
+    for series_id, slug_prefix in ((10684, "btc-updown-5m-"), (10683, "eth-updown-5m-")):
+        await _refresh_once_5m_series(client, state, series_id, slug_prefix)
+
+
+async def _refresh_once_5m_series(
+    client: httpx.AsyncClient, state: FeedState, series_id: int, slug_prefix: str
+) -> None:
     # Ascending by endDate, floored at now-5min, covers:
     #   - the market currently in its 5-minute window (entry gate lives here)
     #   - the next ~100 upcoming markets
@@ -390,7 +409,7 @@ async def _refresh_once(client: httpx.AsyncClient, state: FeedState) -> None:
     r = await client.get(
         "https://gamma-api.polymarket.com/events",
         params={
-            "series_id": 10684,
+            "series_id": series_id,
             "closed": "false",
             "order": "endDate",
             "ascending": "true",
@@ -410,7 +429,7 @@ async def _refresh_once(client: httpx.AsyncClient, state: FeedState) -> None:
             markets = ev.get("markets") or []
             for m in markets:
                 slug = m.get("slug") or ev.get("slug")
-                if not slug or not slug.startswith("btc-updown-5m-"):
+                if not slug or not slug.startswith(slug_prefix):
                     continue
                 try:
                     close_ts = int(slug.rsplit("-", 1)[-1])
