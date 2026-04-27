@@ -18,6 +18,16 @@ Step 0 v2 dependencies (TODO post-paper_ticks-15m)
 - This module does NOT yet wire into the paper engine; the strategy class
   (Step 2) imports `KEstimator`, calls `record_fill` on each fill and
   `record_quoting_minute` periodically, and persists via `flush_to_db`.
+
+TODO — integration test coverage for DB methods
+-----------------------------------------------
+The unit tests in ``tests/unit/strategies/polymarket_btc15m/test_k_estimator.py``
+mock the DB; the live ``flush_to_db`` and ``load_from_db`` paths run at
+76 % coverage. Integration tests that hit a real Postgres (research schema
+fixture) are owed and must be authored when the Step 0 v2 remote routine
+``trig_01UJ26a2L1FB9yi5pNJ4Pg94`` (2026-05-27) re-runs the analysis. The
+agent owns delivering the DB-roundtrip tests as part of its Step 2 prep
+or Step 0 v2 retrospective, not before.
 """
 
 from __future__ import annotations
