@@ -1,6 +1,6 @@
 # último run VPS
 
 Status: **OK**
-Timestamp: 2026-04-28T06:05:16Z
+Timestamp: 2026-04-29T06:06:59Z
 Nota: todos los backtests exportados
 
