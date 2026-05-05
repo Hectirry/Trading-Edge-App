@@ -1,7 +1,7 @@
 # último run VPS
 
 Status: **FAIL**
-Timestamp: 2026-05-04T06:00:03Z
+Timestamp: 2026-05-05T06:00:05Z
 Nota: todos los backtests fallaron
 
 ## stderr (últimas 20 líneas)
